@@ -1,0 +1,6 @@
+build/Binaries
+build/Objects
+build/.vs
+*.sdf
+*.suo
+*.vcxproj.user
