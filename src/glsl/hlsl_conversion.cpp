@@ -174,92 +174,6 @@ static ir_variable *resolve_output_semantic(void *mem_ctx, _mesa_glsl_parse_stat
     return NULL;
 }
 
-class ir_lower_hlsl_intrinsics_call : public ir_hierarchical_visitor
-{
-public:
-    ir_lower_hlsl_intrinsics_call(_mesa_glsl_parse_state *parse_state, exec_list *instructions)
-        : parse_state(parse_state), instructions(instructions)
-    {
-
-    }
-
-    virtual ir_visitor_status visit_leave(ir_call *call)
-    {
-        ir_rvalue *new_rvalue = NULL;
-        if (strcmp(call->callee_name(), "frac") == 0)
-        {
-            // convert frac(x) to unop fract
-            ir_expression *expr = new (ralloc_parent(call)) ir_expression(ir_unop_fract, (ir_rvalue *)call->actual_parameters.node_at_index(0));
-            ir_assignment *asgn = new (ralloc_parent(call)) ir_assignment(call->return_deref, expr);
-            call->insert_before(asgn);
-            call->remove();
-            return visit_continue;
-        }
-        else if (strcmp(call->callee_name(), "mul") == 0)
-        {
-            // if it's not being returned, don't bother even calculating
-            if (call->return_deref != NULL)
-            {
-                // convert mul(x, y) to (x * y)
-                ir_expression *expr = new (ralloc_parent(call)) ir_expression(ir_binop_mul, (ir_rvalue *)call->actual_parameters.node_at_index(0), (ir_rvalue *)call->actual_parameters.node_at_index(1));
-                ir_assignment *asgn = new (ralloc_parent(call)) ir_assignment(call->return_deref, expr);
-                call->insert_before(asgn);
-            }
-            
-            // remove the function call
-            call->remove();
-            return visit_continue;
-        }
-        else if (strcmp(call->callee_name(), "clip") == 0)
-        {
-            // convert clip(x) to if (x <= 0) { discard }
-            ir_constant *zero = new (ralloc_parent(call)) ir_constant(0.0f, 1);
-            ir_expression *cond = new (ralloc_parent(call)) ir_expression(ir_binop_lequal, (ir_rvalue *)call->actual_parameters.node_at_index(0), zero);
-            ir_discard *discard = new (ralloc_parent(call)) ir_discard(cond);
-            call->insert_before(discard);
-            //ir_discard *discard = new (ralloc_parent(call)) ir_discard();
-            //ir_if *branch = new (ralloc_parent(call)) ir_if(cond);
-            //branch->then_instructions.push_head(discard);
-            //call->insert_before(branch);
-            call->remove();
-            return visit_continue;
-        }
-        else if (strcmp(call->callee_name(), "saturate") == 0)
-        {
-            // convert saturate(x) to unop saturate(x)
-            ir_expression *expr = new (ralloc_parent(call)) ir_expression(ir_unop_saturate, (ir_rvalue *)call->actual_parameters.node_at_index(0));
-            ir_assignment *asgn = new (ralloc_parent(call)) ir_assignment(call->return_deref, expr);
-            call->insert_before(asgn);
-            call->remove();
-            return visit_continue;
-        }
-        else if (strcmp(call->callee_name(), "lerp") == 0)
-        {
-            // convert lerp(x, y, f) to triop lerp(x, y, f)
-            ir_expression *expr = new (ralloc_parent(call)) ir_expression(ir_triop_lrp, (ir_rvalue *)call->actual_parameters.node_at_index(0), (ir_rvalue *)call->actual_parameters.node_at_index(1), (ir_rvalue *)call->actual_parameters.node_at_index(2));
-            ir_assignment *asgn = new (ralloc_parent(call)) ir_assignment(call->return_deref, expr);
-            call->insert_before(asgn);
-            call->remove();
-            return visit_continue;
-        }
-        else
-        {
-            return visit_continue;
-        }
-    }
-
-    _mesa_glsl_parse_state *parse_state;
-    exec_list *instructions;
-};
-
-
-static bool convert_intrinsic_calls_to_inline(exec_list *instructions, _mesa_glsl_parse_state *state)
-{
-    ir_lower_hlsl_intrinsics_call call_lowerer(state, instructions);
-    call_lowerer.run(instructions);
-    return true;
-}
-
 static bool create_main_signature(exec_list *instructions, _mesa_glsl_parse_state *state)
 {
     // get memory context
@@ -584,20 +498,72 @@ static void remove_discards(exec_list *instructions)
 
 // TODO:
 // convert_sampler_states_to_samplers
-// remove_sampler_states
 
-// struct remove_sampler_states_visitor : ir_hierarchical_visitor
-// {
-//     static inline bool is_removable_type(const glsl_type *type)
-//     {
-//         return (type == glsl_type::SamplerState_type || type == glsl_type::SamplerComparisonState_type);
-//     }
-// 
-//     virtual ir_visitor_status visit_enter(ir_call *ir) override final
-//     {
-//         // kill from parameter lists
-//     }
-// };
+struct remove_sampler_states_visitor : ir_hierarchical_visitor
+{
+    static inline bool is_removable_type(const glsl_type *type)
+    {
+        return (type == glsl_type::SamplerState_type || type == glsl_type::SamplerComparisonState_type);
+    }
+
+    virtual ir_visitor_status visit_enter(ir_function_signature *ir) override final
+    {
+        // remove from parameter lists
+        foreach_in_list_safe(ir_rvalue, param, &ir->parameters)
+        {
+            if (is_removable_type(param->type))
+                param->remove();
+        }
+
+        // remove sampler return types
+        if (is_removable_type(ir->return_type))
+            ir->return_type = glsl_type::void_type;
+
+        // visit body
+        return visit_continue;
+    }
+
+    virtual ir_visitor_status visit_enter(ir_call *ir) override final
+    {
+        // remove return type
+        if (ir->return_deref != NULL && is_removable_type(ir->return_deref->type))
+            ir->return_deref = NULL;
+
+        // remove from parameter lists
+        foreach_in_list_safe(ir_rvalue, param, &ir->actual_parameters)
+        {
+            if (is_removable_type(param->type))
+                param->remove();
+        }
+
+        // no need to visit the parameters, since we've already done it
+        return visit_continue_with_parent;
+    }
+
+    virtual ir_visitor_status visit_enter(ir_assignment *ir) override final
+    {
+        // remove assignments to/from sampler types
+        if (is_removable_type(ir->lhs->type))
+            ir->remove();
+
+        return visit_continue_with_parent;
+    }
+
+    virtual ir_visitor_status visit(ir_variable *ir) override final
+    {
+        // remove variable declarations
+        if (is_removable_type(ir->type))
+            ir->remove();
+
+        return visit_continue;
+    }
+};
+
+static void remove_sampler_states(exec_list *instructions)
+{
+    remove_sampler_states_visitor visitor;
+    visitor.run(instructions);
+}
 
 bool _mesa_hlsl_post_convert(exec_list *instructions, _mesa_glsl_parse_state *state)
 {       
@@ -609,6 +575,9 @@ bool _mesa_hlsl_post_convert(exec_list *instructions, _mesa_glsl_parse_state *st
 
     //if (!convert_intrinsic_calls_to_inline(instructions, state))
         //return false;
+
+    // remove sampler state types
+    remove_sampler_states(instructions);
 
     // GLSL ES 1.0 fixups, ugh.
     if (state->es_shader && state->language_version < 300)

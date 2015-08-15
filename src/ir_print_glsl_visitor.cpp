@@ -726,13 +726,6 @@ void ir_print_glsl_visitor::visit(ir_variable *ir)
         return;
     }
 
-    // skip sampler states
-    if (ir->type == glsl_type::SamplerState_type)
-    {
-        skipped_this_ir = true;
-        return;
-    }
-
     // handle layout parameters
     if (language_version >= 420)
 	{
