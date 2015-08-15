@@ -1041,6 +1041,9 @@ public:
    /** Whether or not this is a HLSL intrinsic function that must be inlined. */
    bool is_hlsl_intrinsic;
 
+   /** Is this a prototype? */
+   bool is_prototype() const { return (origin != NULL); }
+
    /** If this is a prototype clone, get the original function. */
    const ir_function_signature *get_origin() const { return (origin != NULL) ? origin : this; }
 

@@ -256,6 +256,7 @@ const static struct builtin_type_versions {
    T(atomic_uint,                     420, 999)
 
    T(SamplerState,                    300, 300)
+   T(SamplerComparisonState,          300, 300)
 };
 
 static const glsl_type *const deprecated_types[] = {

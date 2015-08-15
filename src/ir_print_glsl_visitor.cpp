@@ -1118,9 +1118,9 @@ void ir_print_glsl_visitor::visit(ir_expression *ir)
 static const char* tex_sampler_dim_name[] = {
     "1D", "2D", "3D", "Cube", "Rect", "Buf", "External", "MS"
 };
-static int tex_sampler_dim_size[] = {
-	1, 2, 3, 3, 2, 2, 2, 2
-};
+// static int tex_sampler_dim_size[] = {
+// 	1, 2, 3, 3, 2, 2, 2, 2
+// };
 
 void ir_print_glsl_visitor::visit(ir_texture *ir)
 {
@@ -1150,15 +1150,10 @@ void ir_print_glsl_visitor::visit(ir_texture *ir)
 	    glsl_sampler_dim sampler_dim = (glsl_sampler_dim)ir->sampler->type->sampler_dimensionality;
 	    const bool is_shadow = ir->sampler->type->sampler_shadow;
         const bool is_array = ir->sampler->type->sampler_array;
+        const bool is_proj = (ir->projector != NULL);
         const glsl_type* uv_type = ir->coordinate->type;
         const int uv_dim = uv_type->vector_elements;
-        int sampler_uv_dim = tex_sampler_dim_size[sampler_dim];
-        if (is_shadow)
-            sampler_uv_dim += 1;
-        if (is_array)
-            sampler_uv_dim += 1;
-        const bool is_proj = (uv_dim > sampler_uv_dim);
-	
+
         // texture function name
         //ACS: shadow lookups and lookups with dimensionality included in the name were deprecated in 130
         if(language_version<130) 
@@ -1209,9 +1204,22 @@ void ir_print_glsl_visitor::visit(ir_texture *ir)
 	    // sampler
 	    ir->sampler->accept(this);
 	    buffer.asprintf_append (", ");
-	
-	    // texture coordinate
-	    ir->coordinate->accept(this);
+
+        // texture coordinate
+        // shadow requires the last component be the comparison value
+        if (is_shadow)
+        {
+            const glsl_type *shadow_type = glsl_type::get_instance(uv_type->base_type, uv_type->vector_elements + 1, uv_type->matrix_columns);
+            buffer.asprintf_append("%s(", (shadow_type != NULL) ? shadow_type->name : "");
+            ir->coordinate->accept(this);
+            buffer.append(", /* SHADOWCOMPVAL */");
+            ir->shadow_comparitor->accept(this);
+            buffer.append(")");
+        }
+        else
+        {
+            ir->coordinate->accept(this);
+        }
 	
 	    // lod bias
 	    if (ir->op == ir_txb)

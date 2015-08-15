@@ -224,6 +224,7 @@ glsl_type::contains_opaque() const {
    case GLSL_TYPE_SAMPLER:
    case GLSL_TYPE_IMAGE:
    case GLSL_TYPE_ATOMIC_UINT:
+   case GLSL_TYPE_OBJECT:
       return true;
    case GLSL_TYPE_ARRAY:
       return fields.array->contains_opaque();

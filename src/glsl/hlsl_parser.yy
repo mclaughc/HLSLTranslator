@@ -153,10 +153,10 @@ static bool match_layout_qualifier(const char *s1, const char *s2,
 %token USAMPLER1D USAMPLER2D USAMPLER3D USAMPLERCUBE USAMPLER1DARRAY
 %token USAMPLER2DARRAY USAMPLERCUBEARRAY
 %token SAMPLER2DRECT ISAMPLER2DRECT USAMPLER2DRECT SAMPLER2DRECTSHADOW
-%token SAMPLERBUFFER ISAMPLERBUFFER USAMPLERBUFFER
+%token BUFFER ISAMPLERBUFFER USAMPLERBUFFER
 %token SAMPLER2DMS ISAMPLER2DMS USAMPLER2DMS
 %token SAMPLER2DMSARRAY ISAMPLER2DMSARRAY USAMPLER2DMSARRAY
-%token SAMPLEREXTERNALOES SAMPLERSTATE
+%token SAMPLEREXTERNALOES SAMPLERSTATE SAMPLERCOMPARISONSTATE
 %token IMAGE1D IMAGE2D IMAGE3D IMAGE2DRECT IMAGECUBE IMAGEBUFFER
 %token IMAGE1DARRAY IMAGE2DARRAY IMAGECUBEARRAY IMAGE2DMS IMAGE2DMSARRAY
 %token IIMAGE1D IIMAGE2D IIMAGE3D IIMAGE2DRECT IIMAGECUBE IIMAGEBUFFER
@@ -207,7 +207,7 @@ static bool match_layout_qualifier(const char *s1, const char *s2,
 %type <identifier> QUOTED_STRING
 
     /* HLSL tokens */
-%token CBUFFER
+%token CBUFFER TBUFFER
 
 %type <identifier> variable_identifier
 %type <node> statement
@@ -2001,6 +2001,7 @@ basic_type_specifier_nonarray:
    | SAMPLERCUBE            { $$ = "samplerCube"; }
    | SAMPLEREXTERNALOES     { $$ = "samplerExternalOES"; }
    | SAMPLERSTATE           { $$ = "SamplerState"; }
+   | SAMPLERCOMPARISONSTATE { $$ = "SamplerComparisonState"; }
    | SAMPLER1DSHADOW        { $$ = "sampler1DShadow"; }
    | SAMPLER2DSHADOW        { $$ = "sampler2DShadow"; }
    | SAMPLER2DRECTSHADOW    { $$ = "sampler2DRectShadow"; }
@@ -2009,7 +2010,7 @@ basic_type_specifier_nonarray:
    | SAMPLER2DARRAY         { $$ = "sampler2DArray"; }
    | SAMPLER1DARRAYSHADOW   { $$ = "sampler1DArrayShadow"; }
    | SAMPLER2DARRAYSHADOW   { $$ = "sampler2DArrayShadow"; }
-   | SAMPLERBUFFER          { $$ = "samplerBuffer"; }
+   | BUFFER                 { $$ = "samplerBuffer"; }
    | SAMPLERCUBEARRAY       { $$ = "samplerCubeArray"; }
    | SAMPLERCUBEARRAYSHADOW { $$ = "samplerCubeArrayShadow"; }
    | ISAMPLER1D             { $$ = "isampler1D"; }
@@ -2080,6 +2081,7 @@ templated_object_type_name:
    | SAMPLERCUBE            { $$ = "samplerCube"; }
    | SAMPLEREXTERNALOES     { $$ = "samplerExternalOES"; }
    | SAMPLERSTATE           { $$ = "SamplerState"; }
+   | SAMPLERCOMPARISONSTATE { $$ = "SamplerComparisonState"; }
    | SAMPLER1DSHADOW        { $$ = "sampler1DShadow"; }
    | SAMPLER2DSHADOW        { $$ = "sampler2DShadow"; }
    | SAMPLER2DRECTSHADOW    { $$ = "sampler2DRectShadow"; }
@@ -2088,7 +2090,7 @@ templated_object_type_name:
    | SAMPLER2DARRAY         { $$ = "sampler2DArray"; }
    | SAMPLER1DARRAYSHADOW   { $$ = "sampler1DArrayShadow"; }
    | SAMPLER2DARRAYSHADOW   { $$ = "sampler2DArrayShadow"; }
-   | SAMPLERBUFFER          { $$ = "samplerBuffer"; }
+   | BUFFER                 { $$ = "samplerBuffer"; }
    | SAMPLERCUBEARRAY       { $$ = "samplerCubeArray"; }
    | SAMPLERCUBEARRAYSHADOW { $$ = "samplerCubeArrayShadow"; }
    | ISAMPLER1D             { $$ = "isampler1D"; }

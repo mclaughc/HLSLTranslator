@@ -565,19 +565,348 @@ static void remove_sampler_states(exec_list *instructions)
     visitor.run(instructions);
 }
 
+// struct 
+// 
+// struct expand_sampler_function_parameters_visitor : public ir_visitor
+// {
+//     expand_sampler_function_parameters_visitor(exec_list *instructions, _mesa_glsl_parse_state *state)
+//         : instructions(instructions), state(state), current_function(NULL), found_tex(NULL)
+//     {
+// 
+//     }
+// 
+//     virtual void visit(ir_function_signature *ir) override
+//     {
+//         // skip prototypes
+//         if (ir->is_prototype())
+//             return;
+// 
+//         // for each parameter, if it is a sampler parameter, search for usage
+//         // bug: this won't catch cases where the sampler is copied to a local, then used
+//         foreach_in_list(ir_variable, var, &ir->parameters)
+//         {
+//             if (var->type->base_type == GLSL_TYPE_SAMPLER)
+//             {
+//                 ir_texture *last_tex = NULL;
+//                 ir_rvalue *last_sampler = NULL;
+// 
+//                 // search for texture instructions
+//                 foreach_in_list(ir_instruction, inst, &ir->body)
+//                 {
+//                     if (inst->ir_type != ir_type_texture)
+//                         continue;
+// 
+//                     ir_texture *tex = inst->as_texture();
+//                     if (last_tex != NULL)
+//                     {
+//                         // second+ usage
+//                         if (last_sampler != tex->hlsl_sampler_state)
+//                         {
+//                             // texture used with >1 sampler state
+//                             state->add_error("in function %s, sampler parameter %s used with >1 sampler state, this is not supported", ir->function_name(), var->name);
+//                             return;
+//                         }
+//                     }
+//                     else
+//                     {
+//                         // first usage
+//                         last_tex = tex;
+//                         last_sampler = tex->hlsl_sampler_state;
+//                     }
+//                 }
+// 
+//                 // needs conversion to shadow type?
+//                 if (last_sampler != NULL && last_sampler->type == glsl_type::SamplerComparisonState_type)
+//                 {
+//                     // convert the type of the parameter
+//                     const glsl_type *new_type = glsl_type::get_sampler_instance((glsl_sampler_dim)var->type->sampler_dimensionality, true, var->type->sampler_array, (glsl_base_type)var->type->sampler_type);
+//                     if (new_type == NULL)
+//                         var->type = new_type;
+//                 }
+//             }
+//         }
+//     }
+// 
+//     virtual void visit(ir_variable *) override {}
+//     virtual void visit(ir_function *) override {}
+//     virtual void visit(ir_expression *) override {}
+//     virtual void visit(ir_texture *) override {}
+//     virtual void visit(ir_swizzle *) override {}
+//     virtual void visit(ir_dereference_variable *) override {}
+//     virtual void visit(ir_dereference_array *) override {}
+//     virtual void visit(ir_dereference_record *) override {}
+//     virtual void visit(ir_assignment *) override {}
+//     virtual void visit(ir_constant *) override {}
+//     virtual void visit(ir_call *) override {}
+//     virtual void visit(ir_return *) override {}
+//     virtual void visit(ir_discard *) override {}
+//     virtual void visit(ir_if *) override {}
+//     virtual void visit(ir_loop *) override {}
+//     virtual void visit(ir_loop_jump *) override {}
+//     virtual void visit(ir_emit_vertex *) override {}
+//     virtual void visit(ir_end_primitive *) override {}
+//     virtual void visit(ir_barrier *) override {}
+// 
+// private:
+//     exec_list *instructions;
+//     _mesa_glsl_parse_state *state;
+//     ir_function_signature *current_function;
+//     ir_texture *found_tex;
+// };
+// 
+// static void expand_samplers(exec_list *instructions)
+// {
+// 
+// }
+
+// convert functions that take samplers as parameters to use shadow types
+// bug: this won't catch cases where the sampler is copied to a local, then used
+// but of optimization is done prior to this pass it shouldn't be an issue
+static bool convert_function_parameters_to_shadow_types(exec_list *instructions, _mesa_glsl_parse_state *state)
+{
+    foreach_in_list(ir_instruction, ir, instructions)
+    {
+        // only handle function signatures
+        if (ir->ir_type != ir_type_function_signature)
+            continue;
+
+        // skip prototypes
+        ir_function_signature *sig = (ir_function_signature *)ir;
+        if (sig->is_prototype())
+            continue;
+
+        // for each parameter, if it is a sampler parameter, search for usage
+        foreach_in_list(ir_variable, var, &sig->parameters)
+        {
+            if (var->type->base_type == GLSL_TYPE_SAMPLER)
+            {
+                ir_texture *last_tex = NULL;
+                ir_rvalue *last_sampler = NULL;
+
+                // search for texture instructions
+                foreach_in_list(ir_instruction, inst, &sig->body)
+                {
+                    if (inst->ir_type != ir_type_texture)
+                        continue;
+
+                    ir_texture *tex = inst->as_texture();
+                    if (last_tex != NULL)
+                    {
+                        // second+ usage
+                        if (last_sampler != tex->hlsl_sampler_state)
+                        {
+                            // texture used with >1 sampler state
+                            state->add_error("in function %s, sampler parameter %s used with >1 sampler state, this is not supported", sig->function_name(), var->name);
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        // first usage
+                        last_tex = tex;
+                        last_sampler = tex->hlsl_sampler_state;
+                    }
+                }
+
+                // needs conversion to shadow type?
+                if (last_sampler != NULL && last_sampler->type == glsl_type::SamplerComparisonState_type)
+                {
+                    // convert the type of the parameter
+                    const glsl_type *new_type = glsl_type::get_sampler_instance((glsl_sampler_dim)var->type->sampler_dimensionality, true, var->type->sampler_array, (glsl_base_type)var->type->sampler_type);
+                    if (new_type == NULL)
+                        var->type = new_type;
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
+// convert direct usage of samplers in shadow mode to shadow types, cloning the uniforms as necessary
+struct expand_sampler_visitor : public ir_hierarchical_visitor
+{
+    expand_sampler_visitor(void *mem_ctx) 
+        : mem_ctx(mem_ctx), generic_sampler_rvalue(NULL), generic_shadow_sampler_rvalue(NULL)
+    {
+
+    }
+    ~expand_sampler_visitor()
+    {
+        foreach_in_list(cloned_texture, ctex, &cloned_textures)
+            delete ctex;
+    }
+
+    // bit of a hack, but needed due to function calls
+    ir_rvalue *get_generic_sampler_rvalue()
+    {
+        if (generic_sampler_rvalue != NULL)
+            return generic_sampler_rvalue;
+
+        ir_variable *var = new (mem_ctx) ir_variable(glsl_type::SamplerState_type, "__generic_SamplerState", ir_var_temporary);
+        generic_sampler_rvalue = new (mem_ctx) ir_dereference_variable(var);
+        return generic_sampler_rvalue;
+    }
+    ir_rvalue *get_generic_shadow_sampler_rvalue()
+    {
+        if (generic_shadow_sampler_rvalue != NULL)
+            return generic_shadow_sampler_rvalue;
+
+        ir_variable *var = new (mem_ctx) ir_variable(glsl_type::SamplerComparisonState_type, "__generic_SamplerComparisonState", ir_var_temporary);
+        generic_shadow_sampler_rvalue = new (mem_ctx) ir_dereference_variable(var);
+        return generic_shadow_sampler_rvalue;
+    }
+
+    ir_variable *clone_texture(ir_variable *texture, ir_rvalue *sampler_state)
+    {
+        ir_variable *clone = texture->clone(ralloc_parent(texture), NULL);
+        clone->merged_sampler_var = (sampler_state != NULL) ? sampler_state->variable_referenced() : NULL;
+        if (clone->merged_sampler_var != NULL)
+            clone->name = ralloc_asprintf("%s_%s", clone->name, clone->merged_sampler_var->name);
+
+        // convert samplers to shadow samplers
+        bool texture_is_shadow = (texture->type->sampler_shadow);
+        bool sampler_is_shadow = (clone->merged_sampler_var != NULL && clone->merged_sampler_var->type == glsl_type::SamplerComparisonState_type);
+        if (texture_is_shadow != sampler_is_shadow)
+        {
+            const glsl_type *new_type = glsl_type::get_sampler_instance((glsl_sampler_dim)texture->type->sampler_dimensionality, sampler_is_shadow, texture->type->sampler_array, (glsl_base_type)texture->type->sampler_type);
+            if (new_type != NULL)
+                clone->type = new_type;
+        }
+
+        cloned_texture *ctex = new (mem_ctx) cloned_texture;
+        ctex->orig_texture = texture;
+        ctex->new_texture = clone;
+        ctex->sampler_state = sampler_state;
+        cloned_textures.push_tail(ctex);
+
+        // add after the initial declaration
+        texture->insert_after(clone);
+
+        return clone;
+    }
+
+    ir_variable *get_cloned_texture(ir_variable *texture, ir_rvalue *sampler_state)
+    {
+        foreach_in_list(cloned_texture, ctex, &cloned_textures)
+        {
+            if (ctex->orig_texture == texture && ctex->sampler_state == sampler_state)
+                return ctex->new_texture;
+        }
+
+        return clone_texture(texture, sampler_state);
+    }
+
+    ir_variable *bind_texture_to_sampler(ir_variable *texture, ir_rvalue *sampler_state)
+    {
+        if (texture->merged_sampler_var == sampler_state->variable_referenced())
+            return texture;
+
+        // TODO: rename if behaviour is ALWAYS RENAME
+        if (texture->merged_sampler_var != NULL)
+            return get_cloned_texture(texture, sampler_state);
+
+        // convert samplers to shadow samplers
+        bool texture_is_shadow = (texture->type->sampler_shadow);
+        bool sampler_is_shadow = (sampler_state != NULL && sampler_state->type == glsl_type::SamplerComparisonState_type);
+        if (texture_is_shadow != sampler_is_shadow)
+        {
+            const glsl_type *new_type = glsl_type::get_sampler_instance((glsl_sampler_dim)texture->type->sampler_dimensionality, sampler_is_shadow, texture->type->sampler_array, (glsl_base_type)texture->type->sampler_type);
+            if (new_type != NULL)
+                texture->type = new_type;
+        }
+
+        texture->merged_sampler_var = sampler_state->variable_referenced();
+        return texture;
+    }
+
+    virtual ir_visitor_status visit_enter(ir_texture *ir) override final
+    {
+        // texture load instructions can be left as-is
+        if (ir->hlsl_sampler_state == NULL)
+            return visit_continue_with_parent;
+
+        // can only handle uniforms
+        ir_dereference_variable *tex_deref = ir->sampler->as_dereference_variable();
+        if (tex_deref == NULL || tex_deref->var->data.mode != ir_var_uniform)
+            return visit_continue_with_parent;
+
+        // bind each texture call to their sampler state
+        tex_deref->var = bind_texture_to_sampler(tex_deref->var, ir->hlsl_sampler_state);
+        tex_deref->type = tex_deref->var->type;
+
+        // done with the texture call
+        return visit_continue_with_parent;
+    }
+
+    virtual ir_visitor_status visit_enter(ir_call *ir) override final
+    {
+        ir_function_signature *sig = ir->callee;
+        unsigned int param_index = 0;
+
+        // is the function call taking a shadow type, and we are a generic type?
+        foreach_in_list(ir_rvalue, param, &ir->actual_parameters)
+        {
+            // skip non-sampler parameters, not even worth the time
+            if (param->ir_type != ir_type_dereference_variable || param->type->base_type != GLSL_TYPE_SAMPLER)
+            {
+                param_index++;
+                continue;
+            }
+
+            // can only handle uniforms
+            ir_dereference_variable *param_deref = param->as_dereference_variable();
+            if (param_deref->var->data.mode != ir_var_uniform)
+            {
+                param_index++;
+                continue;
+            }
+
+            // compare against the prototype
+            ir_variable *c_param = (ir_variable *)ir->callee->parameters.node_at_index(param_index);
+            if (c_param != NULL)
+            {
+                // bind to a generic sampler state
+                ir_rvalue *sampler_state = (c_param->type == glsl_type::SamplerComparisonState_type) ? get_generic_shadow_sampler_rvalue() : get_generic_sampler_rvalue();
+                param_deref->var = bind_texture_to_sampler(param_deref->var, sampler_state);
+                param_deref->type = param_deref->var->type;
+            }
+
+            // next param
+            param_index++;
+        }
+
+        // no need to look at params/return
+        return visit_continue_with_parent;
+    }
+
+private:
+    struct cloned_texture : public exec_node
+    {
+        DECLARE_RALLOC_CXX_OPERATORS(cloned_texture)
+
+        ir_variable *orig_texture;
+        ir_variable *new_texture;
+        ir_rvalue *sampler_state;
+    };
+
+    void *mem_ctx;
+    exec_list cloned_textures;
+    ir_rvalue *generic_sampler_rvalue;
+    ir_rvalue *generic_shadow_sampler_rvalue;
+};
+
+static void expand_samplers(exec_list *instructions, _mesa_glsl_parse_state *state)
+{
+    expand_sampler_visitor visitor(state);
+    visitor.run(instructions);
+}
+
 bool _mesa_hlsl_post_convert(exec_list *instructions, _mesa_glsl_parse_state *state)
 {       
-    //if (!convert_and_rename_entrypoint(instructions, state))
-        //return false;
-
-    //if (!check_functions_for_semantics(instructions, state))
-        //return false;
-
-    //if (!convert_intrinsic_calls_to_inline(instructions, state))
-        //return false;
-
-    // remove sampler state types
-    remove_sampler_states(instructions);
+    // don't do anything if there's errors
+    if (state->error)
+        return false;
 
     // GLSL ES 1.0 fixups, ugh.
     if (state->es_shader && state->language_version < 300)
@@ -599,6 +928,12 @@ bool _mesa_hlsl_post_convert(exec_list *instructions, _mesa_glsl_parse_state *st
     // Create main function
     if (!create_main_signature(instructions, state))
         return false;
+
+    // expand samplers
+    expand_samplers(instructions, state);
+
+    // remove sampler state types
+    remove_sampler_states(instructions);
         
     return !state->error;
 }

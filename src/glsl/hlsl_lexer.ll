@@ -359,6 +359,7 @@ samplerExternalOES		{
 		}
 
 SamplerState    return SAMPLERSTATE;
+SamplerComparisonState  return SAMPLERCOMPARISONSTATE;
 
    /* keywords available with ARB_gpu_shader5 */
 precise		KEYWORD_WITH_ALT(400, 0, 400, 0, yyextra->ARB_gpu_shader5_enable, PRECISE);
@@ -557,7 +558,7 @@ common		KEYWORD(130, 300, 0, 0, COMMON);
 partition	KEYWORD(130, 300, 0, 0, PARTITION);
 active		KEYWORD(130, 300, 0, 0, ACTIVE);
 superp		KEYWORD(130, 100, 0, 0, SUPERP);
-samplerBuffer	KEYWORD(130, 300, 140, 0, SAMPLERBUFFER);
+Buffer	    KEYWORD(130, 300, 140, 0, BUFFER);
 filter		KEYWORD(130, 300, 0, 0, FILTER);
 row_major	KEYWORD_WITH_ALT(130, 0, 140, 0, yyextra->ARB_uniform_buffer_object_enable && !yyextra->es_shader, ROW_MAJOR);
 
@@ -575,6 +576,7 @@ subroutine	KEYWORD(0, 300, 0, 0, SUBROUTINE);
 
     /* HLSL keywords */
 cbuffer     KEYWORD(0, 0, 300, 300, CBUFFER);
+tbuffer     KEYWORD(0, 0, 300, 300, TBUFFER);
 
     /* HLSL annotations, silently eat them */
 \[branch\]                      ;
