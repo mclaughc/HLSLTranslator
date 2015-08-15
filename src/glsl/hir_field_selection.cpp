@@ -26,6 +26,8 @@
 #include "ast.h"
 #include "glsl_types.h"
 
+static ir_rvalue *handle_texture_object_methods(ir_rvalue *op, YYLTYPE *loc, ast_expression *call, const char *method, exec_list *instructions, struct _mesa_glsl_parse_state *state);
+
 ir_rvalue *
 _mesa_ast_field_selection_to_hir(const ast_expression *expr,
 				 exec_list *instructions,
@@ -70,222 +72,9 @@ _mesa_ast_field_selection_to_hir(const ast_expression *expr,
       /* handle hlsl objects */
       if (state->in_hlsl_mode())
       {
-          // @TODO remove hlsl_sampler_state, do the split here
-          // @TODO consider generating calls to the texture instrinsics here
           /* texture methods */
           if (op->type->base_type == GLSL_TYPE_SAMPLER)
-          {
-              if (strcmp(method, "Sample") == 0)
-              {
-                  if (call->expressions.length() < 2 || call->expressions.length() > 3)
-                  {
-                      _mesa_glsl_error(&loc, state, "Sample method takes 2-3 arguments.");
-                      return ir_rvalue::error_value(ctx);
-                  }
-                  else
-                  {
-                      ir_texture *tex = new (ctx)ir_texture(ir_tex);
-                      tex->set_sampler(op->as_dereference(), op->type->sampler_data_type());
-                      tex->hlsl_sampler_state = exec_node_data(ast_expression, call->expressions.node_at_index(0), link)->hir(instructions, state);
-                      tex->coordinate = exec_node_data(ast_expression, call->expressions.node_at_index(1), link)->hir(instructions, state);
-                      if (call->expressions.length() > 2)
-                          tex->offset = exec_node_data(ast_expression, call->expressions.node_at_index(2), link)->hir(instructions, state);
-
-                      // handle typed textures, ie Texture2D<float> return types
-                      if (op->type->template_inner_type != NULL)
-                      {
-                          // convert to the template type
-                          result = convert_vector_type(op->type->template_inner_type, tex, state);
-                      }
-                      else
-                      {
-                          // no conversion
-                          result = tex;
-                      }
-                  }
-              }
-              else if (strcmp(method, "SampleLevel") == 0)
-              {
-                  if (call->expressions.length() < 3 || call->expressions.length() > 4)
-                  {
-                      _mesa_glsl_error(&loc, state, "Sample method takes 3-4 arguments.");
-                      return ir_rvalue::error_value(ctx);
-                  }
-                  else
-                  {
-                      ir_texture *tex = new (ctx)ir_texture(ir_txl);
-                      tex->set_sampler(op->as_dereference(), op->type->sampler_data_type());
-                      tex->hlsl_sampler_state = exec_node_data(ast_expression, call->expressions.node_at_index(0), link)->hir(instructions, state);
-                      tex->coordinate = exec_node_data(ast_expression, call->expressions.node_at_index(1), link)->hir(instructions, state);
-                      tex->lod_info.lod = exec_node_data(ast_expression, call->expressions.node_at_index(2), link)->hir(instructions, state);
-                      apply_implicit_conversion(glsl_type::float_type, tex->lod_info.lod, state);
-                      if (call->expressions.length() > 3)
-                      {
-                          apply_implicit_conversion(glsl_type::ivec2_type, tex->offset, state);
-                          tex->offset = exec_node_data(ast_expression, call->expressions.node_at_index(3), link)->hir(instructions, state);
-                      }
-
-                      // handle typed textures, ie Texture2D<float> return types
-                      if (op->type->template_inner_type != NULL)
-                      {
-                          // convert to the template type
-                          result = convert_vector_type(op->type->template_inner_type, tex, state);
-                      }
-                      else
-                      {
-                          // no conversion
-                          result = tex;
-                      }
-                  }
-              }
-              else if (strcmp(method, "SampleCmp") == 0 || strcmp(method, "SampleCmpLevelZero") == 0)
-              {
-                  // convert sampler to shadow type
-                  state->add_error_at(&loc, "SampleCmp unsupported as of current");
-              }
-              else if (strcmp(method, "Load") == 0)
-              {
-                  // split packed vector to coords+lod
-                  ir_rvalue *coords = exec_node_data(ast_expression, call->expressions.node_at_index(0), link)->hir(instructions, state);
-                  if (coords == NULL || coords->type->base_type != GLSL_TYPE_INT || coords->type->vector_elements != (op->type->coordinate_components() + 1))
-                  {
-                      state->add_error_at(&loc, "Texture Load call must have integer coordinates of components + 1");
-                  }
-                  else
-                  {
-                      // emit texel fetch op, @TODO Handle texture buffers, @TODO Multisample
-                      ir_texture *tex = new (ctx) ir_texture(ir_txf);
-                      tex->set_sampler(op->as_dereference(), op->type->sampler_data_type());
-                      tex->coordinate = new (ctx) ir_swizzle(coords, 0, 1, 2, 3, op->type->coordinate_components());
-                      tex->lod_info.lod = new (ctx) ir_swizzle(coords, op->type->coordinate_components(), 0, 0, 0, 1);
-                      if (call->expressions.length() > 1)
-                      {
-                          apply_implicit_conversion(glsl_type::ivec2_type, tex->offset, state);
-                          tex->offset = exec_node_data(ast_expression, call->expressions.node_at_index(1), link)->hir(instructions, state);
-                      }
-
-                      // handle typed textures, ie Texture2D<float> return types
-                      if (op->type->template_inner_type != NULL)
-                      {
-                          // convert to the template type
-                          result = convert_vector_type(op->type->template_inner_type, tex, state);
-                      }
-                      else
-                      {
-                          // no conversion
-                          result = tex;
-                      }
-                  }
-              }
-              else if (strcmp(method, "GetDimensions") == 0)
-              {
-                  // find number of components
-                  unsigned int num_indices = UINT32_MAX - 10;
-                  if (op->type->sampler_dimensionality == GLSL_SAMPLER_DIM_1D)
-                      num_indices = 1;
-                  else if (op->type->sampler_dimensionality == GLSL_SAMPLER_DIM_2D || op->type->sampler_dimensionality == GLSL_SAMPLER_DIM_CUBE || op->type->sampler_dimensionality == GLSL_SAMPLER_DIM_RECT || op->type->sampler_dimensionality == GLSL_SAMPLER_DIM_MS)
-                      num_indices = 2;
-                  else if (op->type->sampler_dimensionality == GLSL_SAMPLER_DIM_3D)
-                      num_indices = 3;
-
-                  // check argument count
-                  if (call->expressions.length() < num_indices)
-                  {
-                      state->add_error_at(&loc, "GetDimensions method takes at least %u arguments.", num_indices);
-                      return ir_rvalue::error_value(ctx);
-                  }
-                  else
-                  {
-                      ir_texture *tex = new (ctx)ir_texture (ir_txs);
-                      tex->sampler = op->as_dereference();
-                      tex->type = glsl_type::ivec(num_indices);
-
-                      // has mipmap?
-                      unsigned int base = 0;
-                      if (call->expressions.length() <= num_indices)
-                      {
-                          tex->lod_info.lod = new (ctx)ir_constant((int)0, 1);
-                      }
-                      else
-                      {
-                          if (call->expressions.length() < (num_indices + 2))
-                          {
-                              state->add_error_at(&loc, "GetDimensions method with mip level requires numberOfLevels specified.");
-                              return ir_rvalue::error_value(ctx);
-                          }
-
-                          ir_rvalue *lod_expr = exec_node_data(ast_expression, call->expressions.node_at_index(0), link)->hir(instructions, state);
-                          if (lod_expr != NULL)
-                          {
-                              apply_implicit_conversion(glsl_type::int_type, lod_expr, state);
-                              tex->lod_info.lod = lod_expr;
-                          }
-
-                          ir_rvalue *levels_expr = exec_node_data(ast_expression, call->expressions.node_at_index(1 + num_indices), link)->hir(instructions, state);
-                          if (levels_expr != NULL)
-                          {
-                              ir_texture *levels = new (ctx)ir_texture(ir_query_levels);
-                              levels->sampler = op->as_dereference();
-                              levels->type = glsl_type::int_type;
-
-                              ir_rvalue *levels_value = levels;
-                              apply_implicit_conversion(levels_expr->type, levels_value, state);
-                              ir_assignment *asgn = new (ctx) ir_assignment(levels_expr, levels_value);
-                              instructions->push_tail(asgn);
-                          }
-
-                          base = 1;
-                      }
-
-                      // add the texture operation to the stream
-                      //instructions->push_tail(tex);
-
-                      // assign to the parameters
-                      ir_rvalue *out_loc;
-                      ir_rvalue *swizzle;
-                      
-                      // width
-                      out_loc = exec_node_data(ast_expression, call->expressions.node_at_index(base + 0), link)->hir(instructions, state);
-                      swizzle = (out_loc != NULL) ? ir_swizzle::create(tex, "x", num_indices) : NULL;
-                      if (swizzle != NULL)
-                      {
-                          apply_implicit_conversion(out_loc->type, swizzle, state);
-                          instructions->push_tail(new (ctx)ir_assignment(out_loc, swizzle));
-
-                          // height
-                          if (num_indices > 1)
-                          {
-                              out_loc = exec_node_data(ast_expression, call->expressions.node_at_index(base + 1), link)->hir(instructions, state);
-                              swizzle = (out_loc != NULL) ? ir_swizzle::create(tex, "y", num_indices) : NULL;
-                              if (swizzle != NULL)
-                              {
-                                  apply_implicit_conversion(out_loc->type, swizzle, state);
-                                  instructions->push_tail(new (ctx)ir_assignment(out_loc, swizzle));
-
-                                  // depth
-                                  if (num_indices > 2)
-                                  {
-                                      out_loc = exec_node_data(ast_expression, call->expressions.node_at_index(base + 2), link)->hir(instructions, state);
-                                      swizzle = (out_loc != NULL) ? ir_swizzle::create(tex, "z", num_indices) : NULL;
-                                      if (swizzle != NULL)
-                                      {
-                                          apply_implicit_conversion(out_loc->type, swizzle, state);
-                                          instructions->push_tail(new (ctx)ir_assignment(out_loc, swizzle));
-                                      }
-                                  }
-                              }
-                          }
-                      }                      
-                  }
-
-                  // we're not returning anything
-                  return NULL;
-              }
-              else
-              {
-                  state->add_error_at(&loc, "unknown texture object method: '%s'", method);
-              }
-          }
+              result = handle_texture_object_methods(op, &loc, call, method, instructions, state);
       }
       else
       {
@@ -342,4 +131,223 @@ _mesa_ast_field_selection_to_hir(const ast_expression *expr,
    }
 
    return result ? result : ir_rvalue::error_value(ctx);
+}
+
+static ir_rvalue *handle_texture_object_methods(ir_rvalue *op, YYLTYPE *loc, ast_expression *call, const char *method, exec_list *instructions, struct _mesa_glsl_parse_state *state)
+{
+    void *ctx = ralloc_parent(op);
+    ir_rvalue *result = NULL;
+
+    // @TODO remove hlsl_sampler_state, do the split here
+    // @TODO consider generating calls to the texture instrinsics here
+   
+    if (strcmp(method, "Sample") == 0)
+    {
+        if (call->expressions.length() < 2 || call->expressions.length() > 3)
+        {
+            _mesa_glsl_error(loc, state, "Sample method takes 2-3 arguments.");
+            return ir_rvalue::error_value(ctx);
+        }
+        else
+        {
+            ir_texture *tex = new (ctx)ir_texture(ir_tex);
+            tex->set_sampler(op->as_dereference(), op->type->sampler_data_type());
+            tex->hlsl_sampler_state = exec_node_data(ast_expression, call->expressions.node_at_index(0), link)->hir(instructions, state);
+            tex->coordinate = exec_node_data(ast_expression, call->expressions.node_at_index(1), link)->hir(instructions, state);
+            if (call->expressions.length() > 2)
+                tex->offset = exec_node_data(ast_expression, call->expressions.node_at_index(2), link)->hir(instructions, state);
+
+            // handle typed textures, ie Texture2D<float> return types
+            if (op->type->template_inner_type != NULL)
+            {
+                // convert to the template type
+                result = convert_vector_type(op->type->template_inner_type, tex, state);
+            }
+            else
+            {
+                // no conversion
+                result = tex;
+            }
+        }
+    }
+    else if (strcmp(method, "SampleLevel") == 0)
+    {
+        if (call->expressions.length() < 3 || call->expressions.length() > 4)
+        {
+            _mesa_glsl_error(loc, state, "Sample method takes 3-4 arguments.");
+            return ir_rvalue::error_value(ctx);
+        }
+        else
+        {
+            ir_texture *tex = new (ctx)ir_texture(ir_txl);
+            tex->set_sampler(op->as_dereference(), op->type->sampler_data_type());
+            tex->hlsl_sampler_state = exec_node_data(ast_expression, call->expressions.node_at_index(0), link)->hir(instructions, state);
+            tex->coordinate = exec_node_data(ast_expression, call->expressions.node_at_index(1), link)->hir(instructions, state);
+            tex->lod_info.lod = exec_node_data(ast_expression, call->expressions.node_at_index(2), link)->hir(instructions, state);
+            apply_implicit_conversion(glsl_type::float_type, tex->lod_info.lod, state);
+            if (call->expressions.length() > 3)
+            {
+                apply_implicit_conversion(glsl_type::ivec2_type, tex->offset, state);
+                tex->offset = exec_node_data(ast_expression, call->expressions.node_at_index(3), link)->hir(instructions, state);
+            }
+
+            // handle typed textures, ie Texture2D<float> return types
+            if (op->type->template_inner_type != NULL)
+            {
+                // convert to the template type
+                result = convert_vector_type(op->type->template_inner_type, tex, state);
+            }
+            else
+            {
+                // no conversion
+                result = tex;
+            }
+        }
+    }
+    else if (strcmp(method, "SampleCmp") == 0 || strcmp(method, "SampleCmpLevelZero") == 0)
+    {
+        // convert sampler to shadow type
+        state->add_error_at(loc, "SampleCmp unsupported as of current");
+    }
+    else if (strcmp(method, "Load") == 0)
+    {
+        // split packed vector to coords+lod
+        ir_rvalue *coords = exec_node_data(ast_expression, call->expressions.node_at_index(0), link)->hir(instructions, state);
+        if (coords == NULL || coords->type->base_type != GLSL_TYPE_INT || coords->type->vector_elements != (op->type->coordinate_components() + 1))
+        {
+            state->add_error_at(loc, "Texture Load call must have integer coordinates of components + 1");
+        }
+        else
+        {
+            // emit texel fetch op, @TODO Handle texture buffers, @TODO Multisample
+            ir_texture *tex = new (ctx) ir_texture(ir_txf);
+            tex->set_sampler(op->as_dereference(), op->type->sampler_data_type());
+            tex->coordinate = new (ctx) ir_swizzle(coords, 0, 1, 2, 3, op->type->coordinate_components());
+            tex->lod_info.lod = new (ctx) ir_swizzle(coords, op->type->coordinate_components(), 0, 0, 0, 1);
+            if (call->expressions.length() > 1)
+            {
+                apply_implicit_conversion(glsl_type::ivec2_type, tex->offset, state);
+                tex->offset = exec_node_data(ast_expression, call->expressions.node_at_index(1), link)->hir(instructions, state);
+            }
+
+            // handle typed textures, ie Texture2D<float> return types
+            if (op->type->template_inner_type != NULL)
+            {
+                // convert to the template type
+                result = convert_vector_type(op->type->template_inner_type, tex, state);
+            }
+            else
+            {
+                // no conversion
+                result = tex;
+            }
+        }
+    }
+    else if (strcmp(method, "GetDimensions") == 0)
+    {
+        // find number of components
+        unsigned int num_indices = UINT32_MAX - 10;
+        if (op->type->sampler_dimensionality == GLSL_SAMPLER_DIM_1D)
+            num_indices = 1;
+        else if (op->type->sampler_dimensionality == GLSL_SAMPLER_DIM_2D || op->type->sampler_dimensionality == GLSL_SAMPLER_DIM_CUBE || op->type->sampler_dimensionality == GLSL_SAMPLER_DIM_RECT || op->type->sampler_dimensionality == GLSL_SAMPLER_DIM_MS)
+            num_indices = 2;
+        else if (op->type->sampler_dimensionality == GLSL_SAMPLER_DIM_3D)
+            num_indices = 3;
+
+        // check argument count
+        if (call->expressions.length() < num_indices)
+        {
+            state->add_error_at(loc, "GetDimensions method takes at least %u arguments.", num_indices);
+            return ir_rvalue::error_value(ctx);
+        }
+        else
+        {
+            ir_texture *tex = new (ctx)ir_texture(ir_txs);
+            tex->sampler = op->as_dereference();
+            tex->type = glsl_type::ivec(num_indices);
+
+            // has mipmap?
+            unsigned int base = 0;
+            if (call->expressions.length() <= num_indices)
+            {
+                tex->lod_info.lod = new (ctx)ir_constant((int)0, 1);
+            }
+            else
+            {
+                if (call->expressions.length() < (num_indices + 2))
+                {
+                    state->add_error_at(loc, "GetDimensions method with mip level requires numberOfLevels specified.");
+                    return ir_rvalue::error_value(ctx);
+                }
+
+                ir_rvalue *lod_expr = exec_node_data(ast_expression, call->expressions.node_at_index(0), link)->hir(instructions, state);
+                if (lod_expr != NULL)
+                {
+                    apply_implicit_conversion(glsl_type::int_type, lod_expr, state);
+                    tex->lod_info.lod = lod_expr;
+                }
+
+                ir_rvalue *levels_expr = exec_node_data(ast_expression, call->expressions.node_at_index(1 + num_indices), link)->hir(instructions, state);
+                if (levels_expr != NULL)
+                {
+                    ir_texture *levels = new (ctx)ir_texture(ir_query_levels);
+                    levels->sampler = op->as_dereference();
+                    levels->type = glsl_type::int_type;
+
+                    ir_rvalue *levels_value = levels;
+                    apply_implicit_conversion(levels_expr->type, levels_value, state);
+                    ir_assignment *asgn = new (ctx) ir_assignment(levels_expr, levels_value);
+                    instructions->push_tail(asgn);
+                }
+
+                base = 1;
+            }
+
+            // assign to the parameters
+            ir_rvalue *out_loc;
+            ir_rvalue *swizzle;
+
+            // width
+            out_loc = exec_node_data(ast_expression, call->expressions.node_at_index(base + 0), link)->hir(instructions, state);
+            swizzle = (out_loc != NULL) ? ir_swizzle::create(tex, "x", num_indices) : NULL;
+            if (swizzle != NULL)
+            {
+                apply_implicit_conversion(out_loc->type, swizzle, state);
+                instructions->push_tail(new (ctx)ir_assignment(out_loc, swizzle));
+
+                // height
+                if (num_indices > 1)
+                {
+                    out_loc = exec_node_data(ast_expression, call->expressions.node_at_index(base + 1), link)->hir(instructions, state);
+                    swizzle = (out_loc != NULL) ? ir_swizzle::create(tex, "y", num_indices) : NULL;
+                    if (swizzle != NULL)
+                    {
+                        apply_implicit_conversion(out_loc->type, swizzle, state);
+                        instructions->push_tail(new (ctx)ir_assignment(out_loc, swizzle));
+
+                        // depth
+                        if (num_indices > 2)
+                        {
+                            out_loc = exec_node_data(ast_expression, call->expressions.node_at_index(base + 2), link)->hir(instructions, state);
+                            swizzle = (out_loc != NULL) ? ir_swizzle::create(tex, "z", num_indices) : NULL;
+                            if (swizzle != NULL)
+                            {
+                                apply_implicit_conversion(out_loc->type, swizzle, state);
+                                instructions->push_tail(new (ctx)ir_assignment(out_loc, swizzle));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // we're not returning anything
+        result = NULL;
+    }
+    else
+    {
+        state->add_error_at(loc, "unknown texture object method: '%s'", method);
+    }
+
+    return result;
 }

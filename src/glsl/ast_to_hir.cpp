@@ -2055,19 +2055,38 @@ ast_type_specifier::glsl_type(const char **name,
    /* handle templated types */
    if (template_data_type_name != NULL)
    {
-       char *real_type_name = ralloc_asprintf(NULL, "%s<%s>", this->type_name, this->template_data_type_name);
-       type = state->symbols->get_type(real_type_name);
-       if (type == NULL)
-       {
-           /* get base type */
-           const struct glsl_type *base_type = state->symbols->get_type(this->type_name);
-           const struct glsl_type *inner_type = state->symbols->get_type(this->template_data_type_name);
+       /* get base/inner type */
+       const struct glsl_type *base_type = state->symbols->get_type(this->type_name);
+       const struct glsl_type *inner_type = state->symbols->get_type(this->template_data_type_name);
+       assert(base_type != NULL && inner_type != NULL);
 
-           /* create templated type instance */
-           type = glsl_type::get_template_instance(base_type, inner_type);
-           state->symbols->add_type(type->name, type);
+       /* do we need to change the sampler type? (eg Texture2D<int>) */
+       const struct glsl_type *base_return_type = base_type->sampler_data_type();
+       if (base_return_type != NULL && base_return_type->base_type != inner_type->base_type)
+       {
+           /* get a new sampler type the same dimension */
+           base_type = glsl_type::get_sampler_instance((glsl_sampler_dim)base_type->sampler_dimensionality, base_type->sampler_shadow, base_type->sampler_array, inner_type->base_type);
+           assert(base_type != NULL);
+
+           /* if it's not the same width, we still need to use the template type, otherwise we can use the generic type */
+           base_return_type = base_type->sampler_data_type();
+           assert(base_return_type != NULL);
        }
-       ralloc_free(real_type_name);
+
+       /* do we need a templated type? */
+       if (base_return_type != inner_type)
+       {
+           /* get templated type */
+           char *real_type_name = ralloc_asprintf(NULL, "%s<%s>", this->type_name, this->template_data_type_name);
+           type = state->symbols->get_type(real_type_name);
+           if (type == NULL)
+           {
+               /* create templated type instance */
+               type = glsl_type::get_template_instance(base_type, inner_type);
+               state->symbols->add_type(type->name, type);
+           }
+           ralloc_free(real_type_name);
+       }
    }
    else
    {

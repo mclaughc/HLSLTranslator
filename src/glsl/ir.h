@@ -612,6 +612,11 @@ public:
     */
    const char *semantic_name;
 
+   /**
+    * For merged samplers, the sampler state used.
+    */
+   const ir_variable *merged_sampler_var;
+
    struct ir_variable_data {
 
       /**
