@@ -718,7 +718,7 @@ static bool GenerateReflectionGLSL(gl_shader *shader, gl_shader_program *program
                 field->OffsetInBuffer = src->Offset;
                 field->RowMajor = src->RowMajor;
                 field->SizeInBytes = src->Type->std140_size(field->RowMajor);
-                field->ArrayStride = src->Type->std140_base_alignment(field->RowMajor);
+                field->ArrayStride = (field->ArraySize != 1) ? glsl_align(field->SizeInBytes, 16) : field->SizeInBytes;
 #if 0
                 // std140 packing rules, @TODO modify this for others
                 unsigned int base_align = src->Type->std140_base_alignment(dst->RowMajor);
