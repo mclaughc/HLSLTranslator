@@ -2,7 +2,7 @@
 
 Source code compiler/emitter, takes in DX11/12-style HLSL, outputs (at the moment) GLSL. Uses modified Mesa GLSL IR as an intermediate representation.
 
-Optionally, optimizes the output code to reduce load on target platform shader compilers, and can provide reflection data on the emitted code (TODO).
+Optionally, optimizes the output code to reduce load on target platform shader compilers, and can provide reflection data on the emitted code.
 
 ### Usage ###
 TODO

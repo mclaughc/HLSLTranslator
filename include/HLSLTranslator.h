@@ -1,5 +1,4 @@
 #pragma once
-#include <cstring>              // for size_t
 
 #ifdef WIN32
     #ifdef HLSLTRANSLATOR_EXPORTS
@@ -11,71 +10,56 @@
     #define HLSLTRANSLATOR_API 
 #endif
 
-enum HLSLTranslatorShaderStage
+enum HLSLTRANSLATOR_SHADER_STAGE
 {
-    HLSLTranslatorShaderStageVertex,
-    HLSLTranslatorShaderStageGeometry,
-    HLSLTranslatorShaderStagePixel,
-    HLSLTranslatorShaderStageCount
+    HLSLTRANSLATOR_SHADER_STAGE_VERTEX,
+    HLSLTRANSLATOR_SHADER_STAGE_GEOMETRY,
+    HLSLTRANSLATOR_SHADER_STAGE_PIXEL,
+    NUM_HLSLTRANSLATOR_SHADER_STAGES
 };
 
-enum HLSLTranslatorOptimizationLevel
+enum HLSLTRANSLATOR_COMPILE_FLAGS
 {
-    HLSLTranslatorOptimizationLevelNone = 0,
-    HLSLTranslatorOptimizationLevelBasic = 1,
-    HLSLTranslatorOptimizationLevelFull = 2,
-    HLSLTranslatorOptimizationLevelDefault = HLSLTranslatorOptimizationLevelFull
+    HLSLTRANSLATOR_COMPILE_FLAG_OPTIMIZATION_LEVEL_1            = (1 << 0),
+    HLSLTRANSLATOR_COMPILE_FLAG_OPTIMIZATION_LEVEL_2            = (1 << 1),
+    HLSLTRANSLATOR_COMPILE_FLAG_OPTIMIZATION_LEVEL_3            = (1 << 2),
+    HLSLTRANSLATOR_COMPILE_FLAG_GENERATE_REFLECTION             = (1 << 3),
+    HLSLTRANSLATOR_COMPILE_FLAG_WARNINGS_ARE_ERRORS             = (1 << 4),
 };
 
-typedef struct HLSLTranslatorMacro
+typedef struct HLSLTRANSLATOR_MACRO
 {
     const char *Name;
     const char *Value;
 
 #ifdef __cplusplus
-    HLSLTranslatorMacro() {}
-    HLSLTranslatorMacro(const char *name, const char *value) : Name(name), Value(value) {}
+    HLSLTRANSLATOR_MACRO() {}
+    HLSLTRANSLATOR_MACRO(const char *name, const char *value) : Name(name), Value(value) {}
 #endif
-} HLSLTranslatorMacro;
+} HLSLTRANSLATOR_MACRO;
 
-typedef struct HLSLTranslatorOutput
+typedef struct HLSLTRANSLATOR_OUTPUT
 {
     char *OutputSource;
-    size_t OutputSourceLength;
+    unsigned int OutputSourceLength;
 
     char *InfoLog;
-    size_t InfoLogLength;
-} HLSLTranslatorOutput;
+    unsigned int InfoLogLength;
+} HLSLTRANSLATOR_OUTPUT;
 
 // Must match that in hlslpp
-typedef bool(*HLSLTranslator_IncludeOpenCallback)(void *memoryContext, const char *includeFileName, bool systemInclude, char **outBuffer, unsigned int *outLength, void *context);
-typedef void(*HLSLTranslator_IncludeCloseCallback)(void *memoryContext, char *buffer, void *context);
+typedef bool(*HLSLTRANSLATOR_INCLUDE_OPEN_CALLBACK)(void *memoryContext, const char *includeFileName, bool systemInclude, char **outBuffer, unsigned int *outLength, void *context);
+typedef void(*HLSLTRANSLATOR_INCLUDE_CLOSE_CALLBACK)(void *memoryContext, char *buffer, void *context);
 
 HLSLTRANSLATOR_API void *HLSLTranslator_AllocateMemory(void *memoryContext, size_t length);
 HLSLTRANSLATOR_API void HLSLTranslator_FreeMemory(void *pMemory);
 
 HLSLTRANSLATOR_API bool HLSLTranslator_PreprocessHLSL(const char *sourceFileName,
                                                       const char *sourceCode,
-                                                      size_t sourceCodeLength,
-                                                      HLSLTranslator_IncludeOpenCallback includeOpenCallback,
-                                                      HLSLTranslator_IncludeCloseCallback includeCloseCallback,
+                                                      unsigned int sourceCodeLength,
+                                                      HLSLTRANSLATOR_INCLUDE_OPEN_CALLBACK includeOpenCallback,
+                                                      HLSLTRANSLATOR_INCLUDE_CLOSE_CALLBACK includeCloseCallback,
                                                       void *includeContext,
-                                                      const HLSLTranslatorMacro *pMacros,
-                                                      size_t nMacros,
-                                                      HLSLTranslatorOutput **ppOutputGLSL);
-
-HLSLTRANSLATOR_API bool HLSLTranslator_ConvertHLSLToGLSL(const char *sourceFileName,
-                                                         const char *sourceCode,
-                                                         size_t sourceCodeLength,
-                                                         HLSLTranslator_IncludeOpenCallback includeOpenCallback,
-                                                         HLSLTranslator_IncludeCloseCallback includeCloseCallback,
-                                                         void *includeContext,
-                                                         const char *entryPoint,
-                                                         enum HLSLTranslatorShaderStage stage,
-                                                         enum HLSLTranslatorOptimizationLevel optimizationLevel,
-                                                         int outputGLSLVersion,
-                                                         int outputGLSLES,
-                                                         const HLSLTranslatorMacro *pMacros,
-                                                         size_t nMacros,
-                                                         HLSLTranslatorOutput **ppOutputGLSL);
-
+                                                      const HLSLTRANSLATOR_MACRO *pMacros,
+                                                      unsigned int nMacros,
+                                                      HLSLTRANSLATOR_OUTPUT **ppOutputHLSL);

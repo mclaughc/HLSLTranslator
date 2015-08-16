@@ -1,4 +1,5 @@
 #include "HLSLTranslator.h"
+#include "HLSLTranslator_GLSL.h"
 #include <cassert>
 
 #include "ast.h"
@@ -411,7 +412,17 @@ struct HLSLTranslatorContext
     _mesa_glsl_parse_state *pParseState;
 };
 
-static char *InternalPreprocessHLSL(void *pMemoryContext, const char *fileName, const char *shaderSource, size_t shaderSourceLength, bool glslES, int glslVersion, const HLSLTranslatorMacro *pMacros, size_t nMacros, HLSLTranslator_IncludeOpenCallback includeOpenCallback, HLSLTranslator_IncludeCloseCallback includeCloseCallback, void *includeContext, char **infoLog)
+void *HLSLTranslator_AllocateMemory(void *memoryContext, size_t length)
+{
+    return ralloc_size(memoryContext, length);
+}
+
+void HLSLTranslator_FreeMemory(void *pMemory)
+{
+    ralloc_free(pMemory);
+}
+
+static char *InternalPreprocessHLSL(void *pMemoryContext, const char *fileName, const char *shaderSource, size_t shaderSourceLength, bool glslES, int glslVersion, const HLSLTRANSLATOR_MACRO *pMacros, size_t nMacros, HLSLTRANSLATOR_INCLUDE_OPEN_CALLBACK includeOpenCallback, HLSLTRANSLATOR_INCLUDE_CLOSE_CALLBACK includeCloseCallback, void *includeContext, char **infoLog)
 {
     void *root = ralloc_context(pMemoryContext);
 
@@ -419,7 +430,7 @@ static char *InternalPreprocessHLSL(void *pMemoryContext, const char *fileName, 
     ralloc_strncat(&realShaderSource, shaderSource, shaderSourceLength);
 
     // create macro list
-    HLSLTranslatorMacro *temp_macros = (HLSLTranslatorMacro *)ralloc_size(root, sizeof(HLSLTranslatorMacro) * (nMacros + 2));
+    HLSLTRANSLATOR_MACRO *temp_macros = (HLSLTRANSLATOR_MACRO *)ralloc_size(root, sizeof(HLSLTRANSLATOR_MACRO) * (nMacros + 2));
     size_t num_macros = nMacros;
     for (size_t i = 0; i < num_macros; i++)
     {
@@ -450,7 +461,7 @@ static char *InternalPreprocessHLSL(void *pMemoryContext, const char *fileName, 
     return preprocessedSource;
 }
 
-static bool PostShaderCompile(gl_context *pGLContext, gl_shader *shader, _mesa_glsl_parse_state *state, HLSLTranslatorOptimizationLevel optimizationLevel, HLSLTranslatorOutput *pOutput)
+static bool PostShaderCompileGLSL(gl_context *pGLContext, gl_shader *shader, _mesa_glsl_parse_state *state, unsigned int compileFlags, HLSLTRANSLATOR_GLSL_OUTPUT *pOutput)
 {
 #if 0
     foreach_list_typed(ast_node, ast, link, &state->translation_unit) {
@@ -489,10 +500,10 @@ static bool PostShaderCompile(gl_context *pGLContext, gl_shader *shader, _mesa_g
         /* Do some optimization at compile time to reduce shader IR size
         * and reduce later work if the same shader is linked multiple times
         */
-        if (optimizationLevel != HLSLTranslatorOptimizationLevelNone)
+        if (compileFlags & (HLSLTRANSLATOR_COMPILE_FLAG_OPTIMIZATION_LEVEL_1 | HLSLTRANSLATOR_COMPILE_FLAG_OPTIMIZATION_LEVEL_2 | HLSLTRANSLATOR_COMPILE_FLAG_OPTIMIZATION_LEVEL_3))
         {
             // @TODO improve optimization flags
-            while (do_common_optimization(shader->ir, (optimizationLevel == HLSLTranslatorOptimizationLevelFull), false, &pGLContext->Const.ShaderCompilerOptions[shader->Stage], pGLContext->Const.NativeIntegers));
+            while (do_common_optimization(shader->ir, (compileFlags & HLSLTRANSLATOR_COMPILE_FLAG_OPTIMIZATION_LEVEL_3) != 0, false, &pGLContext->Const.ShaderCompilerOptions[shader->Stage], pGLContext->Const.NativeIntegers));
         }
         validate_ir_tree(shader->ir);
     }
@@ -551,31 +562,178 @@ static bool PostShaderCompile(gl_context *pGLContext, gl_shader *shader, _mesa_g
         }
     }
 
+    // @TODO link, using seperate shader objects, then re-optimize
     return true;
 }
 
-void *HLSLTranslator_AllocateMemory(void *memoryContext, size_t length)
+static bool IsSkippableReflectionVariable(const char *name)
 {
-    return ralloc_size(memoryContext, length);
+    return (strncmp(name, "gl_", 3) == 0);
 }
 
-void HLSLTranslator_FreeMemory(void *pMemory)
+static bool GenerateReflectionGLSL(gl_shader *shader, _mesa_glsl_parse_state *state, unsigned int compileFlags, HLSLTRANSLATOR_GLSL_OUTPUT *pOutput)
 {
-    ralloc_free(pMemory);
+    HLSLTRANSLATOR_GLSL_SHADER_REFLECTION *pReflection = rzalloc(pOutput, HLSLTRANSLATOR_GLSL_SHADER_REFLECTION);
+
+    // @TODO this could be done with a single pass through the IR...
+    // reflect inputs
+    {
+        // base for shader types
+        static const int location_base[MESA_SHADER_COMPUTE + 1] = { VERT_ATTRIB_GENERIC0, VARYING_SLOT_VAR0, VARYING_SLOT_VAR0, 0 };
+
+        // look through the ir finding variable declarations
+        foreach_in_list(const ir_instruction, ir, shader->ir)
+        {
+            const ir_variable *var = ir->as_variable();
+            if (var != NULL && var->data.mode == ir_var_shader_in && !IsSkippableReflectionVariable(var->name))
+            {
+                HLSLTRANSLATOR_GLSL_SHADER_INPUT *pInputs = const_cast<HLSLTRANSLATOR_GLSL_SHADER_INPUT *>(pReflection->Inputs);
+                pInputs = reralloc(pReflection, pInputs, HLSLTRANSLATOR_GLSL_SHADER_INPUT, pReflection->InputCount + 1);
+                pReflection->Inputs = pInputs;
+
+                HLSLTRANSLATOR_GLSL_SHADER_INPUT *dst = &pInputs[pReflection->InputCount];
+                dst->VariableName = ralloc_strdup(pReflection, var->name);
+                dst->VariableType = var->type->gl_type;
+                dst->ExplicitLocation = (var->data.explicit_location) ? (var->data.location - location_base[shader->Stage]) : -1;
+                pReflection->InputCount++;
+            }
+        }
+    }
+
+    // reflect outputs
+    {
+        // base for shader types
+        static const int location_base[MESA_SHADER_COMPUTE + 1] = { VARYING_SLOT_VAR0, VARYING_SLOT_VAR0, FRAG_RESULT_DATA0, 0 };
+
+        // look through the ir finding variable declarations
+        foreach_in_list(const ir_instruction, ir, shader->ir)
+        {
+            const ir_variable *var = ir->as_variable();
+            if (var != NULL && var->data.mode == ir_var_shader_out && !IsSkippableReflectionVariable(var->name))
+            {
+                HLSLTRANSLATOR_GLSL_SHADER_OUTPUT *pOutputs = const_cast<HLSLTRANSLATOR_GLSL_SHADER_OUTPUT *>(pReflection->Outputs);
+                pOutputs = reralloc(pReflection, pOutputs, HLSLTRANSLATOR_GLSL_SHADER_OUTPUT, pReflection->OutputCount + 1);
+                pReflection->Outputs = pOutputs;
+
+                HLSLTRANSLATOR_GLSL_SHADER_OUTPUT *dst = &pOutputs[pReflection->OutputCount];
+                dst->VariableName = ralloc_strdup(pReflection, var->name);
+                dst->VariableType = var->type->gl_type;
+                dst->ExplicitLocation = (var->data.explicit_location) ? (var->data.location - location_base[shader->Stage]) : -1;
+                pReflection->OutputCount++;
+            }
+        }
+    }
+
+    // reflect uniforms
+    {
+        // look through the ir finding variable declarations
+        foreach_in_list(const ir_instruction, ir, shader->ir)
+        {
+            const ir_variable *var = ir->as_variable();
+            if (var != NULL && var->data.mode == ir_var_uniform && !var->is_in_uniform_block() /*&& !var->is_in_buffer_block()*/ && !IsSkippableReflectionVariable(var->name))
+            {
+                HLSLTRANSLATOR_GLSL_SHADER_UNIFORM *pUniforms = const_cast<HLSLTRANSLATOR_GLSL_SHADER_UNIFORM *>(pReflection->Uniforms);
+                pUniforms = reralloc(pReflection, pUniforms, HLSLTRANSLATOR_GLSL_SHADER_UNIFORM, pReflection->UniformCount + 1);
+                pReflection->Uniforms = pUniforms;
+
+                HLSLTRANSLATOR_GLSL_SHADER_UNIFORM *dst = &pUniforms[pReflection->UniformCount];
+                dst->VariableName = ralloc_strdup(pReflection, var->name);
+                dst->SamplerVariableName = (var->merged_sampler_var != NULL) ? ralloc_strdup(pReflection, var->merged_sampler_var->name) : NULL;
+                dst->VariableType = var->type->gl_type;
+                dst->VariableArraySize = var->type->array_size();
+                dst->ExplicitLocation = (var->data.explicit_location) ? (var->data.location) : -1;
+                pReflection->UniformCount++;
+            }
+        }
+    }
+
+    // reflect uniform blocks
+    // @TODO this is still way too noisy, unused blocks aren't culled
+    {
+        hash_table *done_blocks = hash_table_ctor(0, hash_table_pointer_hash, hash_table_pointer_compare);
+
+        // look through the ir finding variable declarations
+        foreach_in_list(const ir_instruction, ir, shader->ir)
+        {
+            const ir_variable *var = ir->as_variable();
+            if (var != NULL && var->get_interface_type() != NULL)
+            {
+                // ensure we're doing a new uniform block
+                const glsl_type *interface_type = var->get_interface_type(); 
+                if (hash_table_find(done_blocks, interface_type) != NULL)
+                    continue;
+
+                // allocate block
+                HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK *pUniforms = const_cast<HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK *>(pReflection->UniformBlocks);
+                pUniforms = reralloc(pReflection, pUniforms, HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK, pReflection->UniformBlockCount + 1);
+                pReflection->UniformBlocks = pUniforms;
+
+                // fill basic details
+                HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK *dst = &pUniforms[pReflection->UniformBlockCount];
+                dst->BlockName = ralloc_strdup(pReflection, interface_type->name);
+                dst->InstanceName = NULL;
+                dst->Fields = rzalloc_array(pReflection, HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK_FIELD, interface_type->length);
+                dst->FieldCount = interface_type->length;
+                dst->ExplicitLocation = -1; // @TODO
+                dst->RowMajor = (var->data.matrix_layout == GLSL_MATRIX_LAYOUT_ROW_MAJOR);
+                pReflection->UniformBlockCount++;
+
+                // when doing the instance variable, copy it's name (luckily the fields should not appear in the ir stream)
+                if (var->is_interface_instance())
+                    dst->InstanceName = ralloc_strdup(pReflection, var->name);
+
+                // fill fields
+                unsigned int buffer_offset = 0;
+                for (unsigned int i = 0; i < interface_type->length; i++)
+                {
+                    const glsl_struct_field *src = &interface_type->fields.structure[i];
+                    HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK_FIELD *field = const_cast<HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK_FIELD *>(&dst->Fields[i]);
+                    field->VariableName = ralloc_strdup(pReflection, src->name);
+                    field->VariableType = src->type->gl_type;
+                    if (src->type->array_size() < 0)
+                        field->VariableArraySize = 0;
+                    else
+                        field->VariableArraySize = src->type->array_size();
+
+                    // std140 packing rules, @TODO modify this for others
+                    unsigned int base_align = src->type->std140_base_alignment(dst->RowMajor);
+                    unsigned int field_size = src->type->std140_size(dst->RowMajor);
+
+                    // does it fit in the current leftover space
+                    if (base_align > (buffer_offset % 16))
+                        buffer_offset += 16 - (buffer_offset % 16);
+
+                    field->OffsetInBuffer = buffer_offset;
+                    field->SizeInBytes = field_size;
+                    field->ArrayStride = base_align;
+                    buffer_offset += field_size;
+                }
+
+                // done
+                hash_table_insert(done_blocks, pReflection, interface_type);
+            }
+        }
+
+        hash_table_dtor(done_blocks);
+    }
+
+    pOutput->Reflection = pReflection;
+    return true;
 }
+
 
 bool HLSLTranslator_PreprocessHLSL(const char *sourceFileName,
                                    const char *sourceCode,
                                    size_t sourceCodeLength,
-                                   HLSLTranslator_IncludeOpenCallback includeOpenCallback,
-                                   HLSLTranslator_IncludeCloseCallback includeCloseCallback,
+                                   HLSLTRANSLATOR_INCLUDE_OPEN_CALLBACK includeOpenCallback,
+                                   HLSLTRANSLATOR_INCLUDE_CLOSE_CALLBACK includeCloseCallback,
                                    void *includeContext, 
-                                   const HLSLTranslatorMacro *pMacros,
+                                   const HLSLTRANSLATOR_MACRO *pMacros,
                                    size_t nMacros,
-                                   HLSLTranslatorOutput **ppOutputGLSL)
+                                   HLSLTRANSLATOR_OUTPUT **ppOutputGLSL)
 {
     // allocate output
-    HLSLTranslatorOutput *pOutput = (HLSLTranslatorOutput *)rzalloc(0, HLSLTranslatorOutput);
+    HLSLTRANSLATOR_OUTPUT *pOutput = (HLSLTRANSLATOR_OUTPUT *)rzalloc(0, HLSLTRANSLATOR_OUTPUT);
     pOutput->InfoLog = ralloc_strdup(pOutput, "");
     *ppOutputGLSL = pOutput;
 
@@ -591,17 +749,17 @@ bool HLSLTranslator_PreprocessHLSL(const char *sourceFileName,
 bool HLSLTranslator_ConvertHLSLToGLSL(const char *sourceFileName,
                                       const char *sourceCode,
                                       size_t sourceCodeLength,
-                                      HLSLTranslator_IncludeOpenCallback includeOpenCallback,
-                                      HLSLTranslator_IncludeCloseCallback includeCloseCallback,
+                                      HLSLTRANSLATOR_INCLUDE_OPEN_CALLBACK includeOpenCallback,
+                                      HLSLTRANSLATOR_INCLUDE_CLOSE_CALLBACK includeCloseCallback,
                                       void *includeContext, 
                                       const char *entryPoint,
-                                      enum HLSLTranslatorShaderStage stage,
-                                      enum HLSLTranslatorOptimizationLevel optimizationLevel,
+                                      enum HLSLTRANSLATOR_SHADER_STAGE stage,
+                                      unsigned int compileFlags,
                                       int outputGLSLVersion,
                                       int outputGLSLES,
-                                      const HLSLTranslatorMacro *pMacros,
+                                      const HLSLTRANSLATOR_MACRO *pMacros,
                                       size_t nMacros,
-                                      HLSLTranslatorOutput **ppOutputGLSL)
+                                      HLSLTRANSLATOR_GLSL_OUTPUT **ppOutputGLSL)
 {
     // not threadsafe, but meh!
     static bool firstInstance = false;
@@ -616,7 +774,7 @@ bool HLSLTranslator_ConvertHLSLToGLSL(const char *sourceFileName,
     InitializeGLContext(pGLContext, outputGLSLVersion, (outputGLSLES != 0));
 
     // allocate output
-    HLSLTranslatorOutput *pOutput = (HLSLTranslatorOutput *)rzalloc(0, HLSLTranslatorOutput);
+    HLSLTRANSLATOR_GLSL_OUTPUT *pOutput = (HLSLTRANSLATOR_GLSL_OUTPUT *)rzalloc(0, HLSLTRANSLATOR_GLSL_OUTPUT);
     pOutput->InfoLog = ralloc_strdup(pOutput, "");
     *ppOutputGLSL = pOutput;
     
@@ -630,15 +788,15 @@ bool HLSLTranslator_ConvertHLSLToGLSL(const char *sourceFileName,
         gl_shader_stage mesaStage;
         switch (stage)
         {
-        case HLSLTranslatorShaderStageVertex:
+        case HLSLTRANSLATOR_SHADER_STAGE_VERTEX:
             glType = GL_VERTEX_SHADER;
             mesaStage = MESA_SHADER_VERTEX;
             break;
-        case HLSLTranslatorShaderStageGeometry:
+        case HLSLTRANSLATOR_SHADER_STAGE_GEOMETRY:
             glType = GL_GEOMETRY_SHADER;
             mesaStage = MESA_SHADER_GEOMETRY;
             break;
-        case HLSLTranslatorShaderStagePixel:
+        case HLSLTRANSLATOR_SHADER_STAGE_PIXEL:
             glType = GL_FRAGMENT_SHADER;
             mesaStage = MESA_SHADER_FRAGMENT;
             break;
@@ -690,7 +848,7 @@ bool HLSLTranslator_ConvertHLSLToGLSL(const char *sourceFileName,
                 state->es_shader = (pGLContext->API == API_OPENGLES2);
 
                 // post compile stuff
-                if (PostShaderCompile(pGLContext, shader, state, optimizationLevel, pOutput))
+                if (PostShaderCompileGLSL(pGLContext, shader, state, compileFlags, pOutput))
                 {
                     // print the ir
                     pOutput->OutputSource = _mesa_print_ir_glsl(pOutput, shader, shader->ir);
@@ -713,6 +871,10 @@ bool HLSLTranslator_ConvertHLSLToGLSL(const char *sourceFileName,
     // set lengths
     pOutput->InfoLogLength = (pOutput->InfoLog != nullptr) ? strlen(pOutput->InfoLog) : 0;
     pOutput->OutputSourceLength = (pOutput->OutputSource != nullptr) ? strlen(pOutput->OutputSource) : 0;
+
+    // handle reflection
+    if (result && (compileFlags & HLSLTRANSLATOR_COMPILE_FLAG_GENERATE_REFLECTION))
+        result = GenerateReflectionGLSL(shader, state, compileFlags, pOutput);
 
     // cleanup root
     delete state;
