@@ -6,7 +6,7 @@ typedef struct HLSLTRANSLATOR_GLSL_SHADER_INPUT
     const char *VariableName;
     const char *SemanticName;
     unsigned int SemanticIndex;
-    unsigned int VariableType;
+    unsigned int Type;
     int ExplicitLocation;
 } HLSLTranslatorGLSLShaderInput;
 
@@ -15,7 +15,7 @@ typedef struct HLSLTRANSLATOR_GLSL_SHADER_OUTPUT
     const char *VariableName;
     const char *SemanticName;
     unsigned int SemanticIndex;
-    unsigned int VariableType;
+    unsigned int Type;
     int ExplicitLocation;
 } HLSLTRANSLATOR_GLSL_SHADER_OUTPUT;
 
@@ -23,19 +23,20 @@ typedef struct HLSLTRANSLATOR_GLSL_SHADER_UNIFORM
 {
     const char *VariableName;
     const char *SamplerVariableName;
-    unsigned int VariableType;
-    unsigned int VariableArraySize;
+    unsigned int Type;
+    int ArraySize;
     int ExplicitLocation;
 } HLSLTRANSLATOR_GLSL_SHADER_UNIFORM;
 
 typedef struct HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK_FIELD
 {
     const char *VariableName;
-    unsigned int VariableType;
-    unsigned int VariableArraySize;
+    unsigned int Type;
+    int ArraySize;
     unsigned int OffsetInBuffer;
     unsigned int SizeInBytes;
     unsigned int ArrayStride;
+    bool RowMajor;
 } HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK_FIELD;
 
 typedef struct HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK
@@ -46,7 +47,6 @@ typedef struct HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK
     unsigned int FieldCount;
     unsigned int TotalSize;
     int ExplicitLocation;
-    bool RowMajor;
 } HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK;
 
 typedef struct HLSLTRANSLATOR_GLSL_SHADER_REFLECTION

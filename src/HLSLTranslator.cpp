@@ -591,7 +591,7 @@ static bool IsSkippableReflectionVariable(const char *name)
     return (strncmp(name, "gl_", 3) == 0);
 }
 
-static bool GenerateReflectionGLSL(gl_shader *shader, _mesa_glsl_parse_state *state, unsigned int compileFlags, HLSLTRANSLATOR_GLSL_OUTPUT *pOutput)
+static bool GenerateReflectionGLSL(gl_shader *shader, gl_shader_program *program, unsigned int compileFlags, HLSLTRANSLATOR_GLSL_OUTPUT *pOutput)
 {
     HLSLTRANSLATOR_GLSL_SHADER_REFLECTION *pReflection = rzalloc(pOutput, HLSLTRANSLATOR_GLSL_SHADER_REFLECTION);
 
@@ -613,7 +613,7 @@ static bool GenerateReflectionGLSL(gl_shader *shader, _mesa_glsl_parse_state *st
 
                 HLSLTRANSLATOR_GLSL_SHADER_INPUT *dst = &pInputs[pReflection->InputCount];
                 dst->VariableName = ralloc_strdup(pReflection, var->name);
-                dst->VariableType = var->type->gl_type;
+                dst->Type = var->type->gl_type;
                 dst->ExplicitLocation = (var->data.explicit_location) ? (var->data.location - location_base[shader->Stage]) : -1;
                 dst->SemanticName = NULL;
                 dst->SemanticIndex = 0; // @TODO when creating vars, copy semantics
@@ -641,7 +641,7 @@ static bool GenerateReflectionGLSL(gl_shader *shader, _mesa_glsl_parse_state *st
                 dst->VariableName = ralloc_strdup(pReflection, var->name);
                 dst->SemanticName = NULL;
                 dst->SemanticIndex = 0; // @TODO when creating vars, copy semantics
-                dst->VariableType = var->type->gl_type;
+                dst->Type = var->type->gl_type;
                 dst->ExplicitLocation = (var->data.explicit_location) ? (var->data.location - location_base[shader->Stage]) : -1;
                 pReflection->OutputCount++;
             }
@@ -651,21 +651,24 @@ static bool GenerateReflectionGLSL(gl_shader *shader, _mesa_glsl_parse_state *st
     // reflect uniforms
     {
         // look through the ir finding variable declarations
-        foreach_in_list(const ir_instruction, ir, shader->ir)
+        for (unsigned int i = 0; i < program->NumUniformStorage; i++)
         {
-            const ir_variable *var = ir->as_variable();
-            if (var != NULL && var->data.mode == ir_var_uniform && !var->is_in_uniform_block() /*&& !var->is_in_buffer_block()*/ && !IsSkippableReflectionVariable(var->name))
+            const gl_uniform_storage *uniform = &program->UniformStorage[i];
+            if (!uniform->builtin && uniform->block_index < 0 && !IsSkippableReflectionVariable(uniform->name))
             {
+                // @TODO locate the ir_variable for this uniform, or modify the mesa sources to store it here
                 HLSLTRANSLATOR_GLSL_SHADER_UNIFORM *pUniforms = const_cast<HLSLTRANSLATOR_GLSL_SHADER_UNIFORM *>(pReflection->Uniforms);
                 pUniforms = reralloc(pReflection, pUniforms, HLSLTRANSLATOR_GLSL_SHADER_UNIFORM, pReflection->UniformCount + 1);
                 pReflection->Uniforms = pUniforms;
 
                 HLSLTRANSLATOR_GLSL_SHADER_UNIFORM *dst = &pUniforms[pReflection->UniformCount];
-                dst->VariableName = ralloc_strdup(pReflection, var->name);
-                dst->SamplerVariableName = (var->merged_sampler_var != NULL) ? ralloc_strdup(pReflection, var->merged_sampler_var->name) : NULL;
-                dst->VariableType = var->type->gl_type;
-                dst->VariableArraySize = var->type->array_size();
-                dst->ExplicitLocation = (var->data.explicit_location) ? (var->data.location) : -1;
+                dst->VariableName = ralloc_strdup(pReflection, uniform->name);
+                //dst->SamplerVariableName = (var->merged_sampler_var != NULL) ? ralloc_strdup(pReflection, var->merged_sampler_var->name) : NULL;
+                dst->SamplerVariableName = NULL;        // @TODO track this back to the variable
+                dst->Type = uniform->type->gl_type;
+                dst->ArraySize = uniform->type->array_size();
+                //dst->ExplicitLocation = (var->data.explicit_location) ? (var->data.location) : -1;
+                dst->ExplicitLocation = -1;     // @TODO track this back to the variable
                 pReflection->UniformCount++;
             }
         }
@@ -674,72 +677,64 @@ static bool GenerateReflectionGLSL(gl_shader *shader, _mesa_glsl_parse_state *st
     // reflect uniform blocks
     // @TODO this is still way too noisy, unused blocks aren't culled
     {
-        hash_table *done_blocks = hash_table_ctor(0, hash_table_pointer_hash, hash_table_pointer_compare);
-
-        // look through the ir finding variable declarations
-        foreach_in_list(const ir_instruction, ir, shader->ir)
+        for (unsigned int i = 0; i < program->NumUniformBlocks; i++)
         {
-            const ir_variable *var = ir->as_variable();
-            if (var != NULL && var->get_interface_type() != NULL)
+            // @TODO locate the ir_variable for this uniform, or modify the mesa sources to store it here
+            const gl_uniform_block *block = &program->UniformBlocks[i];
+            
+            // allocate block
+            HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK *pUniforms = const_cast<HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK *>(pReflection->UniformBlocks);
+            pUniforms = reralloc(pReflection, pUniforms, HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK, pReflection->UniformBlockCount + 1);
+            pReflection->UniformBlocks = pUniforms;
+
+            // fill basic details
+            HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK *dst = &pUniforms[pReflection->UniformBlockCount];
+            dst->BlockName = ralloc_strdup(pReflection, block->Name);
+            dst->InstanceName = NULL;
+            dst->Fields = rzalloc_array(pReflection, HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK_FIELD, block->NumUniforms);
+            dst->FieldCount = block->NumUniforms;
+            dst->ExplicitLocation = -1; // @TODO
+            //dst->RowMajor = (var->data.matrix_layout == GLSL_MATRIX_LAYOUT_ROW_MAJOR);
+            dst->TotalSize = block->UniformBufferSize;
+            pReflection->UniformBlockCount++;
+
+            // when doing the instance variable, copy it's name (luckily the fields should not appear in the ir stream)
+            //if (var->is_interface_instance())
+                //dst->InstanceName = ralloc_strdup(pReflection, var->name);
+
+            // fill fields
+            unsigned int buffer_offset = 0;
+            for (unsigned int i = 0; i < block->NumUniforms; i++)
             {
-                // ensure we're doing a new uniform block
-                const glsl_type *interface_type = var->get_interface_type(); 
-                if (hash_table_find(done_blocks, interface_type) != NULL)
-                    continue;
+                const gl_uniform_buffer_variable *src = &block->Uniforms[i];
+                HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK_FIELD *field = const_cast<HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK_FIELD *>(&dst->Fields[i]);
+                field->VariableName = ralloc_strdup(pReflection, src->Name);
+                field->Type = src->Type->gl_type;
+                if (src->Type->array_size() < 0)
+                    field->ArraySize = 0;
+                else
+                    field->ArraySize = src->Type->array_size();
 
-                // allocate block
-                HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK *pUniforms = const_cast<HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK *>(pReflection->UniformBlocks);
-                pUniforms = reralloc(pReflection, pUniforms, HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK, pReflection->UniformBlockCount + 1);
-                pReflection->UniformBlocks = pUniforms;
+                field->OffsetInBuffer = src->Offset;
+                field->RowMajor = src->RowMajor;
+                field->SizeInBytes = src->Type->std140_size(field->RowMajor);
+                field->ArrayStride = src->Type->std140_base_alignment(field->RowMajor);
+#if 0
+                // std140 packing rules, @TODO modify this for others
+                unsigned int base_align = src->Type->std140_base_alignment(dst->RowMajor);
+                unsigned int field_size = src->Type->std140_size(dst->RowMajor);
 
-                // fill basic details
-                HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK *dst = &pUniforms[pReflection->UniformBlockCount];
-                dst->BlockName = ralloc_strdup(pReflection, interface_type->name);
-                dst->InstanceName = NULL;
-                dst->Fields = rzalloc_array(pReflection, HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK_FIELD, interface_type->length);
-                dst->FieldCount = interface_type->length;
-                dst->ExplicitLocation = -1; // @TODO
-                dst->RowMajor = (var->data.matrix_layout == GLSL_MATRIX_LAYOUT_ROW_MAJOR);
-                pReflection->UniformBlockCount++;
+                // does it fit in the current leftover space
+                if (base_align > (buffer_offset % 16))
+                    buffer_offset += 16 - (buffer_offset % 16);
 
-                // when doing the instance variable, copy it's name (luckily the fields should not appear in the ir stream)
-                if (var->is_interface_instance())
-                    dst->InstanceName = ralloc_strdup(pReflection, var->name);
-
-                // fill fields
-                unsigned int buffer_offset = 0;
-                for (unsigned int i = 0; i < interface_type->length; i++)
-                {
-                    const glsl_struct_field *src = &interface_type->fields.structure[i];
-                    HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK_FIELD *field = const_cast<HLSLTRANSLATOR_GLSL_SHADER_UNIFORM_BLOCK_FIELD *>(&dst->Fields[i]);
-                    field->VariableName = ralloc_strdup(pReflection, src->name);
-                    field->VariableType = src->type->gl_type;
-                    if (src->type->array_size() < 0)
-                        field->VariableArraySize = 0;
-                    else
-                        field->VariableArraySize = src->type->array_size();
-
-                    // std140 packing rules, @TODO modify this for others
-                    unsigned int base_align = src->type->std140_base_alignment(dst->RowMajor);
-                    unsigned int field_size = src->type->std140_size(dst->RowMajor);
-
-                    // does it fit in the current leftover space
-                    if (base_align > (buffer_offset % 16))
-                        buffer_offset += 16 - (buffer_offset % 16);
-
-                    field->OffsetInBuffer = buffer_offset;
-                    field->SizeInBytes = field_size;
-                    field->ArrayStride = base_align;
-                    buffer_offset += field_size;
-                }
-
-                // done
-                hash_table_insert(done_blocks, pReflection, interface_type);
-                dst->TotalSize = buffer_offset;
+                field->OffsetInBuffer = buffer_offset;
+                field->SizeInBytes = field_size;
+                field->ArrayStride = base_align;
+                buffer_offset += field_size;
+#endif
             }
         }
-
-        hash_table_dtor(done_blocks);
     }
 
     pOutput->Reflection = pReflection;
@@ -890,7 +885,7 @@ bool HLSLTranslator_ConvertHLSLToGLSL(const char *sourceFileName,
 
                             // output reflection
                             if (compileFlags & HLSLTRANSLATOR_COMPILE_FLAG_GENERATE_REFLECTION)
-                                result = GenerateReflectionGLSL(shader, state, compileFlags, pOutput);
+                                result = GenerateReflectionGLSL(program->Shaders[0], program, compileFlags, pOutput);
                         }
                     }
                     else
