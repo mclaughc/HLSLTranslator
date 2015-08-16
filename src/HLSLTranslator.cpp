@@ -19,12 +19,6 @@ _mesa_error_no_memory(const char *caller)
     abort();
 }
 
-void
-linker_error(struct gl_shader_program *prog, const char *fmt, ...)
-{
-    abort();
-}
-
 static void InitializeGLContext(gl_context *ctx, int glslVersion, bool glslES)
 {
     initialize_context_to_defaults(ctx, (glslES) ? API_OPENGLES2 : API_OPENGL_CORE);
@@ -307,8 +301,10 @@ set_shader_inout_layout(struct gl_shader *shader,
    }
 }
 
-static void do_optimization_passes(exec_list* ir, bool linked, const struct gl_shader_compiler_options *options, _mesa_glsl_parse_state* state, void* mem_ctx)
+static void do_optimization_passes(gl_shader *shader, bool linked, const struct gl_shader_compiler_options *options)
 {
+    exec_list *ir = shader->ir;
+
     bool progress;
     do {
         progress = false;
@@ -566,6 +562,30 @@ static bool PostShaderCompileGLSL(gl_context *pGLContext, gl_shader *shader, _me
     return true;
 }
 
+static bool LinkShaderGLSL(gl_context *context, gl_shader_program *program, gl_shader *shader, unsigned int compileFlags, HLSLTRANSLATOR_GLSL_OUTPUT *pOutput)
+{
+    // init program fields
+    program->Shaders = (gl_shader **)rzalloc_array_size(program, sizeof(gl_shader *), 1);
+    program->Shaders[0] = shader;
+    program->NumShaders = 1;
+    program->SeparateShader = true;
+
+    // link shaders
+    link_shaders(context, program);
+    if (!program->LinkStatus)
+        return false;
+
+    // post-shader optimization
+    do_optimization_passes(program->Shaders[0], true, &context->Const.ShaderCompilerOptions[program->Shaders[0]->Stage]);
+
+    // check error state again
+    if (!program->LinkStatus)
+        return false;
+
+    // done
+    return true;
+}
+
 static bool IsSkippableReflectionVariable(const char *name)
 {
     return (strncmp(name, "gl_", 3) == 0);
@@ -595,6 +615,8 @@ static bool GenerateReflectionGLSL(gl_shader *shader, _mesa_glsl_parse_state *st
                 dst->VariableName = ralloc_strdup(pReflection, var->name);
                 dst->VariableType = var->type->gl_type;
                 dst->ExplicitLocation = (var->data.explicit_location) ? (var->data.location - location_base[shader->Stage]) : -1;
+                dst->SemanticName = NULL;
+                dst->SemanticIndex = 0; // @TODO when creating vars, copy semantics
                 pReflection->InputCount++;
             }
         }
@@ -617,6 +639,8 @@ static bool GenerateReflectionGLSL(gl_shader *shader, _mesa_glsl_parse_state *st
 
                 HLSLTRANSLATOR_GLSL_SHADER_OUTPUT *dst = &pOutputs[pReflection->OutputCount];
                 dst->VariableName = ralloc_strdup(pReflection, var->name);
+                dst->SemanticName = NULL;
+                dst->SemanticIndex = 0; // @TODO when creating vars, copy semantics
                 dst->VariableType = var->type->gl_type;
                 dst->ExplicitLocation = (var->data.explicit_location) ? (var->data.location - location_base[shader->Stage]) : -1;
                 pReflection->OutputCount++;
@@ -711,6 +735,7 @@ static bool GenerateReflectionGLSL(gl_shader *shader, _mesa_glsl_parse_state *st
 
                 // done
                 hash_table_insert(done_blocks, pReflection, interface_type);
+                dst->TotalSize = buffer_offset;
             }
         }
 
@@ -746,6 +771,7 @@ bool HLSLTranslator_PreprocessHLSL(const char *sourceFileName,
     return (pOutput->OutputSourceLength != 0);
 }
 
+// TODO: create/move to HLSLTranslator_GLSL.cpp
 bool HLSLTranslator_ConvertHLSLToGLSL(const char *sourceFileName,
                                       const char *sourceCode,
                                       size_t sourceCodeLength,
@@ -810,7 +836,7 @@ bool HLSLTranslator_ConvertHLSLToGLSL(const char *sourceFileName,
             shader = rzalloc(pGLContext, gl_shader);
             shader->Type = glType;
             shader->Stage = mesaStage;
-            state = new (shader) _mesa_glsl_parse_state(pGLContext, mesaStage, pGLContext);
+            state = new (pGLContext) _mesa_glsl_parse_state(pGLContext, mesaStage, pGLContext);
         }
         else
         {
@@ -824,7 +850,7 @@ bool HLSLTranslator_ConvertHLSLToGLSL(const char *sourceFileName,
         char *preprocessedSource = InternalPreprocessHLSL(pGLContext, sourceFileName, sourceCode, sourceCodeLength, outputGLSLES != 0, outputGLSLVersion, pMacros, nMacros, includeOpenCallback, includeCloseCallback, includeContext, &pOutput->InfoLog);
         if (preprocessedSource != nullptr)
         {
-            // always parse as GLSL 3.3, non-ES.
+            // always parse as GLSL 3.3, non-ES. @TODO why did I do this? ES-only stuff? fix it properly...
             state->language_version = 330;
             state->forced_language_version = 330;
             state->es_shader = false;
@@ -850,9 +876,30 @@ bool HLSLTranslator_ConvertHLSLToGLSL(const char *sourceFileName,
                 // post compile stuff
                 if (PostShaderCompileGLSL(pGLContext, shader, state, compileFlags, pOutput))
                 {
-                    // print the ir
-                    pOutput->OutputSource = _mesa_print_ir_glsl(pOutput, shader, shader->ir);
-                    result = (pOutput->OutputSource != nullptr);
+                    // link shaders
+                    gl_shader_program *program = AllocateProgram(pGLContext);
+                    if (LinkShaderGLSL(pGLContext, program, shader, compileFlags, pOutput))
+                    {
+                        // print the ir
+                        pOutput->OutputSource = _mesa_print_ir_glsl(pOutput, program->Shaders[0], program->Shaders[0]->ir);
+                        result = (pOutput->OutputSource != nullptr);
+                        if (result)
+                        {
+                            // set source length
+                            pOutput->OutputSourceLength = strlen(pOutput->OutputSource);
+
+                            // output reflection
+                            if (compileFlags & HLSLTRANSLATOR_COMPILE_FLAG_GENERATE_REFLECTION)
+                                result = GenerateReflectionGLSL(shader, state, compileFlags, pOutput);
+                        }
+                    }
+                    else
+                    {
+                        // copy the linker log
+                        ralloc_asprintf_append(&pOutput->InfoLog, "Linking shader failed: \n");
+                        if (strlen(program->InfoLog) > 0)
+                            ralloc_asprintf_append(&program->InfoLog, "%s\n", program->InfoLog);
+                    }
                 }
             }
             else
@@ -869,12 +916,7 @@ bool HLSLTranslator_ConvertHLSLToGLSL(const char *sourceFileName,
     }
 
     // set lengths
-    pOutput->InfoLogLength = (pOutput->InfoLog != nullptr) ? strlen(pOutput->InfoLog) : 0;
-    pOutput->OutputSourceLength = (pOutput->OutputSource != nullptr) ? strlen(pOutput->OutputSource) : 0;
-
-    // handle reflection
-    if (result && (compileFlags & HLSLTRANSLATOR_COMPILE_FLAG_GENERATE_REFLECTION))
-        result = GenerateReflectionGLSL(shader, state, compileFlags, pOutput);
+    pOutput->InfoLogLength = strlen(pOutput->InfoLog);
 
     // cleanup root
     delete state;

@@ -1072,7 +1072,7 @@ glsl_type::can_implicitly_convert_to(const glsl_type *desired,
    if (this->vector_elements != desired->vector_elements)
    {
        /* except in hlsl, scalar can be converted to vector */
-       if (state->in_hlsl_mode() && (this->is_numeric() || this->is_boolean()) && this->base_type == desired->base_type && vector_elements == 1 && desired->vector_elements > 1)
+       if ((state == NULL || state->in_hlsl_mode()) && (this->is_numeric() || this->is_boolean()) && this->base_type == desired->base_type && vector_elements == 1 && desired->vector_elements > 1)
            return true;
        else
            return false;
