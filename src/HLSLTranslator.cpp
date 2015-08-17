@@ -418,7 +418,7 @@ void HLSLTranslator_FreeMemory(void *pMemory)
     ralloc_free(pMemory);
 }
 
-static char *InternalPreprocessHLSL(void *pMemoryContext, const char *fileName, const char *shaderSource, size_t shaderSourceLength, bool glslES, int glslVersion, const HLSLTRANSLATOR_MACRO *pMacros, size_t nMacros, HLSLTRANSLATOR_INCLUDE_OPEN_CALLBACK includeOpenCallback, HLSLTRANSLATOR_INCLUDE_CLOSE_CALLBACK includeCloseCallback, void *includeContext, char **infoLog)
+static char *InternalPreprocessHLSL(void *pMemoryContext, const char *fileName, const char *shaderSource, unsigned int shaderSourceLength, bool glslES, int glslVersion, const HLSLTRANSLATOR_MACRO *pMacros, unsigned int nMacros, HLSLTRANSLATOR_INCLUDE_OPEN_CALLBACK includeOpenCallback, HLSLTRANSLATOR_INCLUDE_CLOSE_CALLBACK includeCloseCallback, void *includeContext, char **infoLog)
 {
     void *root = ralloc_context(pMemoryContext);
 
@@ -427,7 +427,7 @@ static char *InternalPreprocessHLSL(void *pMemoryContext, const char *fileName, 
 
     // create macro list
     HLSLTRANSLATOR_MACRO *temp_macros = (HLSLTRANSLATOR_MACRO *)ralloc_size(root, sizeof(HLSLTRANSLATOR_MACRO) * (nMacros + 2));
-    size_t num_macros = nMacros;
+    unsigned int num_macros = nMacros;
     for (size_t i = 0; i < num_macros; i++)
     {
         temp_macros[i].Name = pMacros[i].Name;
@@ -744,12 +744,12 @@ static bool GenerateReflectionGLSL(gl_shader *shader, gl_shader_program *program
 
 bool HLSLTranslator_PreprocessHLSL(const char *sourceFileName,
                                    const char *sourceCode,
-                                   size_t sourceCodeLength,
+                                   unsigned int sourceCodeLength,
                                    HLSLTRANSLATOR_INCLUDE_OPEN_CALLBACK includeOpenCallback,
                                    HLSLTRANSLATOR_INCLUDE_CLOSE_CALLBACK includeCloseCallback,
                                    void *includeContext, 
                                    const HLSLTRANSLATOR_MACRO *pMacros,
-                                   size_t nMacros,
+                                   unsigned int nMacros,
                                    HLSLTRANSLATOR_OUTPUT **ppOutputGLSL)
 {
     // allocate output
@@ -761,15 +761,15 @@ bool HLSLTranslator_PreprocessHLSL(const char *sourceFileName,
     pOutput->OutputSource = InternalPreprocessHLSL(pOutput, sourceFileName, sourceCode, sourceCodeLength, false, 100, pMacros, nMacros, includeOpenCallback, includeCloseCallback, includeContext, &pOutput->InfoLog);
 
     // set lengths
-    pOutput->InfoLogLength = (pOutput->InfoLog != nullptr) ? strlen(pOutput->InfoLog) : 0;
-    pOutput->OutputSourceLength = (pOutput->OutputSource != nullptr) ? strlen(pOutput->OutputSource) : 0;
+    pOutput->InfoLogLength = (pOutput->InfoLog != nullptr) ? (unsigned int)strlen(pOutput->InfoLog) : 0;
+    pOutput->OutputSourceLength = (pOutput->OutputSource != nullptr) ? (unsigned int)strlen(pOutput->OutputSource) : 0;
     return (pOutput->OutputSourceLength != 0);
 }
 
 // TODO: create/move to HLSLTranslator_GLSL.cpp
 bool HLSLTranslator_ConvertHLSLToGLSL(const char *sourceFileName,
                                       const char *sourceCode,
-                                      size_t sourceCodeLength,
+                                      unsigned int sourceCodeLength,
                                       HLSLTRANSLATOR_INCLUDE_OPEN_CALLBACK includeOpenCallback,
                                       HLSLTRANSLATOR_INCLUDE_CLOSE_CALLBACK includeCloseCallback,
                                       void *includeContext, 
@@ -779,7 +779,7 @@ bool HLSLTranslator_ConvertHLSLToGLSL(const char *sourceFileName,
                                       int outputGLSLVersion,
                                       int outputGLSLES,
                                       const HLSLTRANSLATOR_MACRO *pMacros,
-                                      size_t nMacros,
+                                      unsigned int nMacros,
                                       HLSLTRANSLATOR_GLSL_OUTPUT **ppOutputGLSL)
 {
     // not threadsafe, but meh!
@@ -881,7 +881,7 @@ bool HLSLTranslator_ConvertHLSLToGLSL(const char *sourceFileName,
                         if (result)
                         {
                             // set source length
-                            pOutput->OutputSourceLength = strlen(pOutput->OutputSource);
+                            pOutput->OutputSourceLength = (unsigned int)strlen(pOutput->OutputSource);
 
                             // output reflection
                             if (compileFlags & HLSLTRANSLATOR_COMPILE_FLAG_GENERATE_REFLECTION)
@@ -911,7 +911,7 @@ bool HLSLTranslator_ConvertHLSLToGLSL(const char *sourceFileName,
     }
 
     // set lengths
-    pOutput->InfoLogLength = strlen(pOutput->InfoLog);
+    pOutput->InfoLogLength = (unsigned int)strlen(pOutput->InfoLog);
 
     // cleanup root
     delete state;

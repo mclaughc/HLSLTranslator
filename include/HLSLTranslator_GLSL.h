@@ -74,7 +74,7 @@ typedef struct HLSLTRANSLATOR_GLSL_OUTPUT
 
 HLSLTRANSLATOR_API bool HLSLTranslator_ConvertHLSLToGLSL(const char *sourceFileName,
                                                          const char *sourceCode,
-                                                         size_t sourceCodeLength,
+                                                         unsigned int sourceCodeLength,
                                                          HLSLTRANSLATOR_INCLUDE_OPEN_CALLBACK includeOpenCallback,
                                                          HLSLTRANSLATOR_INCLUDE_CLOSE_CALLBACK includeCloseCallback,
                                                          void *includeContext,
@@ -84,6 +84,6 @@ HLSLTRANSLATOR_API bool HLSLTranslator_ConvertHLSLToGLSL(const char *sourceFileN
                                                          int outputGLSLVersion,
                                                          int outputGLSLES,
                                                          const HLSLTRANSLATOR_MACRO *pMacros,
-                                                         size_t nMacros,
+                                                         unsigned int nMacros,
                                                          HLSLTRANSLATOR_GLSL_OUTPUT **ppOutputGLSL);
 
