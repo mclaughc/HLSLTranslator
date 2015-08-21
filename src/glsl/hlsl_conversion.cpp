@@ -6,6 +6,7 @@
 #include "glsl_types.h"
 #include "main/imports.h"
 #include "ast.h"
+#include <ctype.h>
 
 static char *create_semantic_variable_name(void *mem_ctx, const char *prefix, const char *input_semantic_name)
 {

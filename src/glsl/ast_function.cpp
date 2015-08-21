@@ -27,9 +27,6 @@
 #include "ir.h"
 #include "main/core.h" /* for MIN2 */
 
-static ir_rvalue *
-convert_component(ir_rvalue *src, const glsl_type *desired_type);
-
 bool
 apply_implicit_conversion(const glsl_type *to, ir_rvalue * &from,
                           struct _mesa_glsl_parse_state *state);
