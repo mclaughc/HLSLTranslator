@@ -1,4 +1,5 @@
 #pragma once
+#include <string.h> /* size_t */
 
 #ifdef WIN32
     #ifdef HLSLTRANSLATOR_EXPORTS
