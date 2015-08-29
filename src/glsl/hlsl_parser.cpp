@@ -150,7 +150,7 @@ static bool match_layout_qualifier(const char *s1, const char *s2,
 
 static bool parse_register_location(YYLTYPE *loc, ast_type_qualifier *out, const char *var, _mesa_glsl_parse_state *state)
 {
-    if (var[0] != 'b' && var[1] != 't' && var[2] != 's' && var[3] != 'u')
+    if (var[0] != 'b' && var[0] != 't' && var[0] != 's' && var[0] != 'u')
     {
         state->add_error_at(loc, "invalid register class: %c", var[0]);
         return false;
