@@ -577,6 +577,8 @@ subroutine	KEYWORD(0, 300, 0, 0, SUBROUTINE);
     /* HLSL keywords */
 cbuffer     KEYWORD(0, 0, 300, 300, CBUFFER);
 tbuffer     KEYWORD(0, 0, 300, 300, TBUFFER);
+register    KEYWORD(0, 0, 300, 300, REGISTER);
+packoffset  KEYWORD(0, 0, 300, 300, PACKOFFSET);
 
     /* HLSL annotations, silently eat them */
 \[branch\]                      ;

@@ -76,6 +76,20 @@ static bool match_layout_qualifier(const char *s1, const char *s2,
    else
       return strcasecmp(s1, s2);
 }
+
+static bool parse_register_location(YYLTYPE *loc, ast_type_qualifier *out, const char *var, _mesa_glsl_parse_state *state)
+{
+    if (var[0] != 'b' && var[1] != 't' && var[2] != 's' && var[3] != 'u')
+    {
+        state->add_error_at(loc, "invalid register class: %c", var[0]);
+        return false;
+    }
+
+    out->flags.q.explicit_location = 1;
+    out->location = atoi(var + 1);
+    return true;
+}
+
 %}
 
 %expect 0
@@ -207,7 +221,7 @@ static bool match_layout_qualifier(const char *s1, const char *s2,
 %type <identifier> QUOTED_STRING
 
     /* HLSL tokens */
-%token CBUFFER TBUFFER
+%token CBUFFER TBUFFER REGISTER PACKOFFSET
 
 %type <identifier> variable_identifier
 %type <node> statement
@@ -221,6 +235,7 @@ static bool match_layout_qualifier(const char *s1, const char *s2,
 %type <type_qualifier> layout_qualifier
 %type <type_qualifier> layout_qualifier_id_list layout_qualifier_id
 %type <type_qualifier> interface_block_layout_qualifier
+%type <type_qualifier> location_qualifier location_qualifier_id
 %type <type_qualifier> memory_qualifier
 %type <type_qualifier> interface_qualifier
 %type <type_specifier> type_specifier
@@ -1876,6 +1891,48 @@ memory_qualifier:
    }
    ;
 
+location_qualifier_id:
+   REGISTER '(' any_identifier ')'
+   {
+       memset(&$$, 0, sizeof($$));
+       if (!parse_register_location(&@3, &$$, $3, state)) {
+           YYERROR;
+       }
+   }
+   |
+   REGISTER '(' any_identifier ',' any_identifier ')'
+   {
+       // space, etc ignored for now
+       memset(&$$, 0, sizeof($$));
+       if (!parse_register_location(&@3, &$$, $3, state)) {
+           YYERROR;
+       }
+   }
+   |
+   PACKOFFSET '(' any_identifier ')'
+   {
+       // packoffset ignored for now
+       memset(&$$, 0, sizeof($$));
+   }
+   |
+   PACKOFFSET '(' any_identifier ',' any_identifier ')'
+   {
+       // packoffset ignored for now
+       memset(&$$, 0, sizeof($$));
+   }
+   ;
+
+location_qualifier:
+    location_qualifier_id
+    | location_qualifier ',' layout_qualifier_id
+    {
+        $$ = $1;
+        if (!$$.merge_qualifier(&@3, state, $3)) {
+            YYERROR;
+        }
+    }
+    ;
+
 array_specifier:
    '[' ']'
    {
@@ -2658,6 +2715,25 @@ cbuffer_block:
    {
        ast_type_qualifier block_qualifier;
        memset(&block_qualifier, 0, sizeof(block_qualifier));
+       block_qualifier.flags.q.uniform = 1;
+
+       /* HLSL default uniform packing */
+       block_qualifier.flags.q.row_major = 1;
+       block_qualifier.flags.q.std140 = 1;
+
+       /* Instantiate block */
+       ast_interface_block *block = new(state) ast_interface_block(block_qualifier, NULL, NULL);
+       block->block_name = $2;
+       block->declarations.push_degenerate_list_at_head(&$4->link);
+
+       /* Done? */
+       $$ = block;
+   }
+   |
+   CBUFFER NEW_IDENTIFIER '{' member_list '}' ':' location_qualifier
+   {
+       ast_type_qualifier block_qualifier;
+       memcpy(&block_qualifier, &$7, sizeof(block_qualifier));
        block_qualifier.flags.q.uniform = 1;
 
        /* HLSL default uniform packing */

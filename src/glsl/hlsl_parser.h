@@ -287,7 +287,9 @@ extern int _mesa_hlsl_debug;
     QUOTED_STRING = 497,
     CBUFFER = 498,
     TBUFFER = 499,
-    THEN = 500
+    REGISTER = 500,
+    PACKOFFSET = 501,
+    THEN = 502
   };
 #endif
 
@@ -296,7 +298,7 @@ extern int _mesa_hlsl_debug;
 typedef union YYSTYPE YYSTYPE;
 union YYSTYPE
 {
-#line 99 "hlsl_parser.yy" /* yacc.c:1909  */
+#line 113 "hlsl_parser.yy" /* yacc.c:1909  */
 
    int n;
    float real;
@@ -334,7 +336,7 @@ union YYSTYPE
       ast_node *else_statement;
    } selection_rest_statement;
 
-#line 338 "hlsl_parser.h" /* yacc.c:1909  */
+#line 340 "hlsl_parser.h" /* yacc.c:1909  */
 };
 # define YYSTYPE_IS_TRIVIAL 1
 # define YYSTYPE_IS_DECLARED 1
