@@ -2730,10 +2730,10 @@ cbuffer_block:
        $$ = block;
    }
    |
-   CBUFFER NEW_IDENTIFIER '{' member_list '}' ':' location_qualifier
+   CBUFFER NEW_IDENTIFIER ':' location_qualifier '{' member_list '}'
    {
        ast_type_qualifier block_qualifier;
-       memcpy(&block_qualifier, &$7, sizeof(block_qualifier));
+       memcpy(&block_qualifier, &$4, sizeof(block_qualifier));
        block_qualifier.flags.q.uniform = 1;
 
        /* HLSL default uniform packing */
@@ -2743,24 +2743,11 @@ cbuffer_block:
        /* Instantiate block */
        ast_interface_block *block = new(state) ast_interface_block(block_qualifier, NULL, NULL);
        block->block_name = $2;
-       block->declarations.push_degenerate_list_at_head(&$4->link);
+       block->declarations.push_degenerate_list_at_head(&$6->link);
 
        /* Done? */
        $$ = block;
    }
-   /* cbuffer with embedded struct, mesa glsl does not support embedded anonymous structs, so we'll handle it here */
-   /*| CBUFFER NEW_IDENTIFIER '{' STRUCT '{' member_list '}' NEW_IDENTIFIER '}' ';' '}'
-   {
-       ast_type_qualifier block_qualifier;
-       memset(&block_qualifier, 0, sizeof(block_qualifier));
-       block_qualifier.flags.q.uniform = 1;
-       block_qualifier.flags.q.row_major = 1;
-       block_qualifier.flags.q.std140 = 1;
-       ast_interface_block *block = new(state)ast_interface_block(block_qualifier, $8, NULL);
-       block->block_name = $2;
-       block->declarations.push_degenerate_list_at_head(&$6->link);
-       $$ = block;
-   }*/
    ;
 
 /* layout_qualifieropt is packed into this rule */
